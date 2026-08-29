@@ -1,0 +1,41 @@
+# Course material — copyrighted, not part of the submission
+*.pdf
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+
+# uv
+.python-version
+
+# Data & model artifacts
+*.csv
+data/
+models/
+*.onnx
+*.pkl
+*.joblib
+
+# DVC
+/data
+*.dvc.lock
+
+# MLflow
+mlruns/
+mlartifacts/
+
+# Airflow
+airflow.db
+airflow-webserver.pid
+logs/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
