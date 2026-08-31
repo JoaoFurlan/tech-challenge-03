@@ -1,5 +1,6 @@
 # Course material — copyrighted, not part of the submission
 *.pdf
+!MLET - Tech Challenge Fase 3.pdf
 
 # Python
 __pycache__/
