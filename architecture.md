@@ -6,8 +6,8 @@ Rationale/trade-offs for each decision live in `decisoes-tecnicas.md` (PT-BR).
 
 ## Problem framing
 
-Classify a medical text report (laudo) into urgency tier **normal / atenção /
-urgente**, served as a real-time REST API. Rather than inventing noisy urgency
+Classify a medical text report (laudo) into urgency tier **normal / attention /
+urgent**, served as a real-time REST API. Rather than inventing noisy urgency
 labels to train against directly, the model is trained on the dataset's real
 ground truth — 5 disease categories — and urgency is derived from that
 prediction via a deterministic, documented mapping layer.
@@ -38,15 +38,15 @@ in two steps:
 
 | Category | Baseline |
 |---|---|
-| Cardiovascular diseases | urgente |
-| Nervous system diseases | atenção |
-| Neoplasms | atenção |
-| Digestive system diseases | atenção |
+| Cardiovascular diseases | urgent |
+| Nervous system diseases | attention |
+| Neoplasms | attention |
+| Digestive system diseases | attention |
 | General pathological conditions | normal |
 
 **2. Per-abstract keyword adjustment** (case-insensitive regex over the abstract
 text; net score = escalate hits − de-escalate hits; positive nudges the tier up
-one step, negative nudges it down one step, capped at urgente / floored at
+one step, negative nudges it down one step, capped at urgent / floored at
 normal):
 
 - Escalate (+1): `acute`, `emergency`, `severe`, `critical`, `sudden`,

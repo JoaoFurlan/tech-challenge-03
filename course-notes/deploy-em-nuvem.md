@@ -23,7 +23,7 @@ component need?" Real systems are usually **hybrid** — batch for reports, real
 for user-facing APIs, serverless for occasional event-driven tasks.
 
 **Our project:** the hospital triage scenario is a **real-time** deploy — a laudo
-comes in, an urgent/atenção/normal answer is needed immediately. This is the
+comes in, an urgent/attention/normal answer is needed immediately. This is the
 architecture argument for the README.
 
 ## 2. The model's own behavior drives the deploy pattern (Aula 02)

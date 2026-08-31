@@ -57,10 +57,10 @@ structurally impossible rather than something to remember.
   manages lifecycle stages (Staging → Production → Archived). Chosen for this
   project.
 - **Accuracy is "dangerous and misleading" on imbalanced datasets.** Our
-  normal/atenção/urgente classes are almost certainly imbalanced (most triage
-  cases probably aren't "urgente"). **Stratified K-Fold cross-validation** (keeps
+  normal/attention/urgent classes are almost certainly imbalanced (most triage
+  cases probably aren't "urgent"). **Stratified K-Fold cross-validation** (keeps
   class proportions consistent across folds) is the right validation strategy, and
-  **recall on the "urgente" class specifically** should be weighted over overall
+  **recall on the "urgent" class specifically** should be weighted over overall
   accuracy — missing an urgent case (false negative) is worse than a false alarm.
   Worth stating explicitly as a modeling decision in the README/video.
 

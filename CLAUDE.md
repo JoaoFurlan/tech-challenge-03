@@ -6,7 +6,7 @@ Postgraduate tech challenge (worth 90% of the grade across all disciplines this 
 Theme: **Deploy de Modelo em Produção com Pipeline CI/CD, Monitoramento e Otimização de Latência**.
 
 Scenario: a hospital needs automatic triage of medical text reports (laudos médicos) —
-classify urgency as **normal / atenção / urgente** — via a lightweight NLP text classifier
+classify urgency as **normal / attention / urgent** — via a lightweight NLP text classifier
 served as a REST API in a Docker container.
 
 Full requirements are in `MLET - Tech Challenge Fase 3 (1).pdf` (already read/summarized in-session).
@@ -36,7 +36,7 @@ README 15%, Video 15%.
 
 - **Dataset:** Medical Abstracts TC Corpus (Kaggle). Note: its native labels are disease
   categories (neoplasms, digestive, cardiovascular, etc.), not urgency levels — mapping
-  those categories (or another signal) to normal/atenção/urgente is an **open decision**,
+  those categories (or another signal) to normal/attention/urgent is an **open decision**,
   not yet resolved.
 - **Solo project.** This folder is not yet a git repo; that's intentional until we decide
   how to handle git/GitHub for CI/CD (open decision — see below).
