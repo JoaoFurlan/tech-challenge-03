@@ -1,6 +1,6 @@
-# Deploy em Nuvem (Etapa 1)
+# Cloud Deployment (Etapa 1)
 
-Course folder: `Deploy em Nuvem/` (Aulas 01–06). Discipline behind Etapa 1 of the
+Course folder: `content/Deploy em Nuvem/` (Aulas 01–06). Discipline behind Etapa 1 of the
 Tech Challenge: architecture decision + initial FastAPI app + Docker + baseline latency.
 
 ## 1. The three deploy patterns (Aula 01)

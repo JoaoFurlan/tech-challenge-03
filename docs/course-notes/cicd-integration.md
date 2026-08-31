@@ -1,6 +1,6 @@
-# Integração com CI/CD — GitHub Actions (Etapa 2, discipline 1 of 2)
+# CI/CD Integration — GitHub Actions (Etapa 2, discipline 1 of 2)
 
-Course folder: `Integração com CICD (GitHub Actions)/` (Aulas 01–08). This course
+Course folder: `content/Integração com CICD (GitHub Actions)/` (Aulas 01–08). This course
 frames CI/CD entirely through **MLOps**, not generic DevOps — the specific twist ML
 adds to CI/CD that exists in any software project.
 

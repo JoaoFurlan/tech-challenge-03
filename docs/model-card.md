@@ -143,8 +143,8 @@ To be filled in after `training/model_selection.py`,
   performing well on this dataset should not be assumed to generalize to real
   hospital intake text without further validation on in-domain data.
 - **No drift monitoring implemented.** In a real deployment, input
-  distribution drift and concept drift (see `course-notes/servicos-de-
-  monitoracao.md`) would need active monitoring; this project's monitoring
+  distribution drift and concept drift (see `course-notes/monitoring-
+  services.md`) would need active monitoring; this project's monitoring
   stack (Prometheus/Grafana) covers operational metrics (request count,
   latency, error rate) only, not model-quality drift.
 - **Single held-out test set.** Results reflect one stratified split; no
@@ -155,5 +155,5 @@ To be filled in after `training/model_selection.py`,
   training data with real (de-identified) hospital laudo text, have the
   urgency-mapping rule reviewed and validated by a clinician rather than
   relying on the author's heuristic, and add the drift-monitoring and
-  human-in-the-loop review practices referenced in `course-notes/pipeline-
-  de-treino.md` before considering any real clinical use.
+  human-in-the-loop review practices referenced in `course-notes/training-
+  pipeline.md` before considering any real clinical use.

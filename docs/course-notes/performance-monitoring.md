@@ -1,9 +1,9 @@
-# Monitoração de Performance (Etapa 3, discipline 1 of 2)
+# Performance Monitoring (Etapa 3, discipline 1 of 2)
 
-Course folder: `Monitoração de Performance/` (Aulas 01–08). Despite the folder
+Course folder: `content/Monitoração de Performance/` (Aulas 01–08). Despite the folder
 name, this is mostly a **model-optimization** course (hyperparameter tuning,
 compression, architecture patterns) — only Aula 8 is actual Prometheus/Grafana
-content. Pairs with `course-notes/servicos-de-monitoracao.md` for Etapa 3.
+content. Pairs with `monitoring-services.md` for Etapa 3.
 
 ## Latência vs. Throughput fundamentals (Aula 1) — high importance
 

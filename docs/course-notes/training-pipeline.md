@@ -1,7 +1,7 @@
-# Pipeline de Treino e Deploy Automático (Etapa 2, discipline 2 of 2)
+# Training Pipeline and Automated Deploy (Etapa 2, discipline 2 of 2)
 
-Course folder: `Pipeline de Treino e Deploy Automático/` (Aulas 01–08). Pairs with
-`course-notes/integracao-cicd.md` for Etapa 2 (GitHub Actions workflow + Airflow DAG).
+Course folder: `content/Pipeline de Treino e Deploy Automático/` (Aulas 01–08). Pairs with
+`cicd-integration.md` for Etapa 2 (GitHub Actions workflow + Airflow DAG).
 
 ## MLOps pipeline anatomy — the TFX reference model (Aula 1)
 

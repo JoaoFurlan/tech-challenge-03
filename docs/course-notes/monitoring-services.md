@@ -1,9 +1,9 @@
-# Serviços de Monitoração (Etapa 3, discipline 2 of 2)
+# Monitoring Services (Etapa 3, discipline 2 of 2)
 
-Course folder: `Serviços de Monitoração/` (Aulas 01–08, filenames just
+Course folder: `content/Serviços de Monitoração/` (Aulas 01–08, filenames just
 "POSTECH - Aula 01" through "Aula 08"). This is the actual Prometheus/Grafana
 observability deep-dive, complementing
-`course-notes/monitoracao-performance.md`'s Aula 8 for Etapa 3.
+`performance-monitoring.md`'s Aula 8 for Etapa 3.
 
 ## Observability fundamentals (Aula 01) — high importance
 

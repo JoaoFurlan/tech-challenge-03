@@ -9,7 +9,7 @@ Scenario: a hospital needs automatic triage of medical text reports (laudos méd
 classify urgency as **normal / attention / urgent** — via a lightweight NLP text classifier
 served as a REST API in a Docker container.
 
-Full requirements are in `MLET - Tech Challenge Fase 3 (1).pdf` (already read/summarized in-session).
+Full requirements are in `MLET - Tech Challenge Fase 3.pdf` (already read/summarized in-session).
 
 This directory is the **experimentation/build ground**. The final "clean" submission repo
 will be a separate repo assembled later from what's built here.
@@ -32,48 +32,48 @@ Required stack: scikit-learn (or similar) for the model, FastAPI for the API,
 Grading weights: Modeling/optimization 20%, Monitoring 20%, CI/CD 15%, Airflow 15%,
 README 15%, Video 15%.
 
-## Decisions made so far
+## Where the actual plan lives
 
-- **Dataset:** Medical Abstracts TC Corpus (Kaggle). Note: its native labels are disease
-  categories (neoplasms, digestive, cardiovascular, etc.), not urgency levels — mapping
-  those categories (or another signal) to normal/attention/urgent is an **open decision**,
-  not yet resolved.
-- **Solo project.** This folder is not yet a git repo; that's intentional until we decide
-  how to handle git/GitHub for CI/CD (open decision — see below).
-- **Cloud architecture doc:** concise (1-2 pages in README), targeting **AWS** specifically,
-  justifying real-time vs batch.
-- **DVC** will be used for dataset versioning (ties dataset snapshots to git commits).
-- **uv** will be used as the Python dependency/lockfile manager (replaces loose
-  `requirements.txt`, chosen over Poetry/pip-compile).
-- **MLflow** will be used for experiment tracking / model registry (params, metrics,
-  artifacts, lifecycle stages).
+Planning is done — the full build plan and its reasoning live in:
 
-## Course lecture materials in this repo
+- **`docs/architecture.md`** — the *what*: dataset, repo structure, modeling pipeline
+  (candidate models, feature engineering, metrics, train/val/test split), the 4 MLflow
+  experiments, latency-optimization branching, tooling, CI/CD, AWS layout, Airflow,
+  monitoring, and what's explicitly out of scope.
+- **`docs/technical-decisions.md`** — the *why*: rationale behind every non-obvious call,
+  especially deliberate simplifications (e.g. why category-classification-then-mapping
+  instead of direct urgency labels, why Airflow standalone instead of the production
+  docker-compose, why F1-macro over ROC-AUC).
+- **`docs/model-card.md`** — model documentation (Mitchell et al. format), not required by
+  the challenge but added as standard practice; quantitative sections are placeholders
+  until the training pipeline runs.
+- **`docs/course-notes/`** — summaries of all 6 course lecture folders (now under
+  `docs/course-notes/content/`, gitignored — raw PDFs, not part of the submission),
+  written during the planning phase, each tying course concepts back to this project.
 
-- `Deploy em Nuvem/` — lecture PDFs for the "Deploy em Nuvem" discipline (Etapa 1).
-  Aula 03 covers AWS specifically and teaches: **ECR** (container image registry),
-  **EC2** (real-time inference, full control, good for always-on low-latency APIs),
-  **AWS Lambda** (serverless/on-demand, has cold-start), **AWS Batch** (batch jobs),
-  **Amazon SageMaker** (managed training/deploy), **S3** (artifact/dataset storage).
-  The README's AWS architecture decision should use this vocabulary rather than
-  services not taught in the course (e.g. prefer EC2 over ECS/Fargate for the
-  real-time API argument, since EC2 is what's explicitly taught for that use case).
-- More lecture PDFs for other disciplines (CI/CD, Airflow, Monitoring, Latência) are
-  being added by the user before we finalize decisions — **check for new folders/PDFs
-  here before resuming planning.**
+Project language is **English throughout** (docs, code, comments, commit messages) —
+the only exception is the original challenge PDF itself, which is source material.
+
+## Repo / Git status
+
+Git repo initialized, pushed to `https://github.com/JoaoFurlan/tech-challenge-03-v1`
+(private). Commits so far: project context + course notes, architecture/decisions docs,
+English-language pass. A pre-push hook on this machine requires interactive confirmation
+(commit identity vs. authenticated `gh` account) — pushes need to be run by the user in
+their own terminal (`! git push origin main`), not through a tool call.
 
 ## Status
 
-Paused mid-planning at the user's request. The user is adding more course lecture PDFs
-(for the other 3 disciplines/etapas) to this directory so we can ground remaining
-decisions in the actual course content before choosing:
+**Planning and documentation phase complete.** All course material reviewed, all major
+design decisions made and recorded (see docs above). Dataset confirmed (Medical
+Abstracts TC Corpus, 14,438 records, 5 categories). **No implementation code has been
+written yet** — `app/`, `training/`, `optimization/`, `dags/`, `frontend/`, `monitoring/`,
+`tests/`, `Dockerfile`, `docker-compose.yml`, `pyproject.toml` all still need to be
+created per `docs/architecture.md`'s repo structure.
 
-- The urgency label-mapping strategy for the dataset
-- The base classifier (TF-IDF + Linear SVM/LogReg vs Random Forest, per PDF's example)
-- The latency optimization technique (ONNX vs quantization vs pruning)
-- Whether to `git init` / push to a real GitHub repo now (needed for CI/CD to actually run)
-  or stay git-free until the "clean" repo is set up
+**Blocked on:** AWS CLI configuration (needed to provision the S3 bucket for DVC, the
+ECR repository, and the IAM OIDC role for GitHub Actions — see `docs/architecture.md` §
+CI/CD and § AWS architecture). Everything else can proceed in parallel.
 
-**Do not resume planning or start implementation until the user says so.**
-When resumed, first check this directory for newly added lecture PDFs and read
-anything relevant before re-engaging on the open decisions above.
+When resumed, read `docs/architecture.md` and `docs/technical-decisions.md` first —
+they supersede any older assumptions in this file.

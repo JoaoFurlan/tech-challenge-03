@@ -2,7 +2,7 @@
 
 Living record of the plan for the Tech Challenge Fase 3 project — hospital laudo
 triage classifier. Written before implementation starts; updated as we build.
-Rationale/trade-offs for each decision live in `decisoes-tecnicas.md` (PT-BR).
+Rationale/trade-offs for each decision live in `technical-decisions.md`.
 
 ## Problem framing
 
@@ -88,9 +88,18 @@ tech-challenge-03-v1/
 ├── docker-compose.yml               # api + prometheus + grafana (+ streamlit)
 ├── pyproject.toml                   # uv-managed
 ├── README.md                        # public-facing, incl. AWS architecture section
-├── architecture.md                  # this file
-├── decisoes-tecnicas.md
-└── course-notes/                    # lecture material summaries (already written)
+└── docs/
+    ├── architecture.md               # this file
+    ├── technical-decisions.md
+    ├── model-card.md
+    └── course-notes/                 # lecture material summaries (already written)
+        ├── cloud-deployment.md
+        ├── cicd-integration.md
+        ├── training-pipeline.md
+        ├── performance-monitoring.md
+        ├── monitoring-services.md
+        ├── latency-performance.md
+        └── content/                  # raw lecture PDFs, gitignored
 ```
 
 ## Modeling pipeline
@@ -229,7 +238,7 @@ endpoint over HTTP (doesn't duplicate model logic). Purely for a better visual
 in the STAR video than Swagger docs/curl — explicitly called out as a nicety,
 not a required deliverable.
 
-## Explicitly out of scope (see `decisoes-tecnicas.md` for full rationale)
+## Explicitly out of scope (see `technical-decisions.md` for full rationale)
 
 Kubernetes/HPA/KEDA, Canary/Shadow deployment, drift detection implementation
 (PSI/KS — concept mentioned in README as forward-looking, not built), word/

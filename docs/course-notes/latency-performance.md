@@ -1,6 +1,6 @@
-# Latência e Performance em Modelos de Dados Não Estruturados (Etapa 4)
+# Latency and Performance in Unstructured Data Models (Etapa 4)
 
-Course folder: `Latência e Performance em Modelos de Dados Não Estruturados/`
+Course folder: `content/Latência e Performance em Modelos de Dados Não Estruturados/`
 (Aulas 01–08). Genuinely graduate-level "ML Systems Engineering" content — written
 for someone optimizing deep neural networks / Transformers / LLMs on GPU clusters,
 not a TF-IDF + linear classifier on CPU. Only two of the eight lectures transfer
@@ -49,7 +49,7 @@ Both techniques framed entirely in a deep-learning context:
   10-50x compression in the neural-net examples given.
 
 **Confirmed final recommendation** (this is now consistent across
-`course-notes/monitoracao-performance.md` Aula 3 and this folder's Aula 4 — our
+`performance-monitoring.md` Aula 3 and this folder's Aula 4 — our
 model candidate is a linear model, not a neural network, which changes the
 practical story):
 
