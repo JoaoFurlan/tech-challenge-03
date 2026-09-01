@@ -305,7 +305,12 @@ enough operational overhead to make that extra realism cheap.
   is *not* free-tier eligible, defeating the point of the switch.
   `Dockerrun.aws.json` (repo root) points at the ECR image; since images are
   tagged by commit SHA (never `latest`), redeploying a new version means
-  updating that file's tag and re-deploying, not automatic.
+  updating that file's tag and re-deploying, not automatic. **Live and
+  verified**: http://medsys.us-east-1.elasticbeanstalk.com/ — `/health`,
+  `/predict` (correct category+urgency on real medical text), and `/metrics`
+  (Prometheus counter reflecting the real request) all confirmed working
+  against the actual deployed instance, not just Beanstalk's own health
+  check.
 - **ECR** — image registry, fed by CI; Beanstalk pulls a tagged image from
   here per `Dockerrun.aws.json`.
 - **S3** — DVC remote for the dataset.

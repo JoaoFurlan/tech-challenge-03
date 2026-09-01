@@ -9,6 +9,12 @@ This README is filled in progressively as the project is built. See
 `docs/architecture.md` (the *what*) and `docs/technical-decisions.md` (the
 *why*) for the full build plan and rationale.
 
+**Live deployment**: http://medsys.us-east-1.elasticbeanstalk.com/ — real-time
+inference API (`/predict`, `/health`, `/metrics`) running on AWS Elastic
+Beanstalk. Not the documented target (App Runner — see `docs/architecture.md`
+§ AWS architecture for why); the written justification below reflects the
+documented decision regardless. Torn down after the grading/demo window.
+
 ## Dataset
 
 [Medical Abstracts TC Corpus](https://www.kaggle.com/datasets/chaitanyakck/medical-text)
