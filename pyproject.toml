@@ -6,6 +6,7 @@ requires-python = ">=3.11,<3.14"
 dependencies = [
     "dvc[s3]>=3.67.1",
     "fastapi>=0.141.1",
+    "matplotlib>=3.11.1",
     "mlflow>=3.15.2",
     "numpy>=2.4.6",
     "onnxruntime>=1.29.0",

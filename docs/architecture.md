@@ -93,7 +93,8 @@ tech-challenge-03-v1/
 ├── tests/
 ├── data/                            # gitignored, DVC-tracked
 ├── models/                          # gitignored, model artifacts
-├── mlruns/                          # gitignored, local MLflow tracking store
+├── mlflow.db                        # gitignored, MLflow run/experiment metadata (SQLite)
+├── mlruns/                          # gitignored, MLflow run artifacts (figures, reports)
 ├── Dockerfile                       # multi-stage build
 ├── docker-compose.yml               # api + prometheus + grafana (+ streamlit)
 ├── pyproject.toml                   # uv-managed
@@ -197,8 +198,11 @@ loaded by FastAPI, and exported to ONNX — one artifact, no train/serve mismatc
 - **uv** — dependency management, replaces `requirements.txt`.
 - **DVC + S3** — dataset versioning, real remote (not local-only), pulled by the
   Airflow ingest task.
-- **MLflow** — local file-based tracking (`mlruns/`), no server infra, viewed via
-  `mlflow ui` in browser.
+- **MLflow** — local SQLite-backed tracking (`mlflow.db`), no server infra
+  beyond the `mlflow ui` process itself, viewed via `mlflow ui` in browser.
+  Not the plain filesystem backend (`mlruns/`) originally planned — the
+  installed MLflow version puts that backend in maintenance mode and refuses
+  to serve it; see `technical-decisions.md`.
 
 ## API & Docker
 

@@ -192,9 +192,26 @@ treating the practice as decorative.
 
 **MLflow, 4 separate experiments, from the start:** `model-selection`,
 `feature-engineering`, `hyperparameter-tuning`, `latency-optimization`. Local
-tracking (`mlruns/`, no dedicated server) — viewed via `mlflow ui` in the
-browser. Separating these stages into distinct experiments (common industry
-practice) keeps each stage's search space clean and comparable.
+tracking, no dedicated server — viewed via `mlflow ui` in the browser.
+Separating these stages into distinct experiments (common industry practice)
+keeps each stage's search space clean and comparable.
+
+**SQLite backend instead of the plain filesystem store:** originally planned
+as file-based tracking (`mlruns/` only, no database). In practice, the
+installed MLflow version (3.15.2) has put the plain filesystem backend into
+maintenance mode — `mlflow ui` refuses to start against `./mlruns` at all,
+raising `MlflowException` and pointing at a database backend instead (it's
+possible to force the old behavior via `MLFLOW_ALLOW_FILE_STORE=true`, but
+running the graded deliverable against a backend MLflow itself says "will
+not receive further updates" felt like the wrong tradeoff for a project
+meant to reflect current practice). Switched to the MLflow-recommended local
+SQLite backend (`mlflow.db`) for run/experiment metadata instead —
+`training/mlflow_config.py` centralizes the tracking URI so every
+experiment script points at the same store. Artifacts (confusion matrices,
+classification reports) still land under `mlruns/` regardless of backend —
+only the metadata store moved. Still fully local, still no tracking-server
+infra to run or maintain — the substance of the original plan is unchanged,
+this is a version-driven correction, not a design change.
 
 ## CI/CD and AWS
 

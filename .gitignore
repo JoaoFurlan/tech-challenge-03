@@ -27,6 +27,7 @@ models/
 *.dvc.lock
 
 # MLflow
+mlflow.db
 mlruns/
 mlartifacts/
 
