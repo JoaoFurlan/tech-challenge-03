@@ -46,3 +46,27 @@ document — full rationale in `docs/technical-decisions.md`. This leaves:
 
 Still comfortably above the challenge's 2,000-sample minimum, with class
 imbalance (~3.4x) essentially unchanged from the raw corpus (~3.2x).
+
+## Model
+
+4 staged MLflow experiments (model-selection, feature-engineering,
+hyperparameter-tuning, latency-optimization) — full search grids and
+reasoning in `docs/technical-decisions.md`. The model chosen,
+**ComplementNB**, was *not* the top scorer on the primary classification
+metric (F1-macro); it was chosen for a substantially lower rate of
+dangerous triage misses (predicting a lower urgency tier than the truth),
+an explicit, documented safety-for-accuracy trade — this pattern (the
+raw-accuracy winner isn't the safety winner) recurred at every stage of
+tuning, not just model choice.
+
+**Final pipeline**: TF-IDF (unigram, 10,000 features) + ComplementNB
+(`alpha=0.5, norm=True`).
+
+**Final test-set result** (1,245 held-out documents, evaluated once):
+
+| Metric | Value |
+|---|---|
+| F1-macro | 0.7786 |
+| Accuracy | 0.7880 |
+| Undertriage rate (dangerous misses) | 0.0498 |
+| Overtriage rate (false alarms) | 0.1446 |

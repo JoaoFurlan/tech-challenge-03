@@ -214,6 +214,16 @@ sublinear_tf=False, stop_words="english"`) — this is what
 `training/train_final.py` retrains on the full pool and evaluates once on
 the held-out test set.
 
+**Final test-set result** (1,245 documents, touched for the first and only
+time here): **F1-macro 0.7786, accuracy 0.7880, undertriage_rate 0.0498,
+overtriage_rate 0.1446**. Close to the hyperparameter-tuning CV estimates
+(F1=0.769, undertriage=0.048) — F1 is slightly better on the full retrain
+(more training data), undertriage essentially matches, no sign of
+overfitting to the CV folds. Artifact saved to `models/pipeline.joblib`
+and logged to MLflow (`final-model` experiment) — this is what the FastAPI
+app loads and what `optimization/export_and_benchmark.py` exports to
+ONNX.
+
 ### Latency optimization (Etapa 4) — branches by winning model type
 
 - **Linear winner** (LogReg/LinearSVC): ONNX export (`skl2onnx`) + dynamic INT8
