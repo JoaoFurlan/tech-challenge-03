@@ -23,7 +23,9 @@ will be a separate repo assembled later from what's built here.
    (request count, latency, error rate).
 5. Latency optimization: apply ONNX export, quantization, or pruning; compare original vs
    optimized latency with real numbers.
-6. README: written (not deployed) AWS architecture decision — batch vs real-time — kept concise.
+6. README: written AWS architecture decision — batch vs real-time — kept concise.
+   (The challenge only requires this in writing; we're additionally deploying
+   for real via AWS App Runner — see `docs/architecture.md` § AWS architecture.)
 7. 5-minute STAR-method video (Situation/Task/Action/Result) demonstrating the project.
 
 Required stack: scikit-learn (or similar) for the model, FastAPI for the API,
@@ -62,6 +64,19 @@ English-language pass. A pre-push hook on this machine requires interactive conf
 (commit identity vs. authenticated `gh` account) — pushes need to be run by the user in
 their own terminal (`! git push origin main`), not through a tool call.
 
+## Collaboration style for implementation work
+
+When writing code for this project — training pipeline, modeling experiments,
+API, everything — **do not build large chunks autonomously and present a
+finished result.** Work in small, checkpointed steps and pause for explicit
+go-ahead before moving to the next one. This matters most around modeling:
+model choices, metric results, feature-engineering decisions, and anything
+with a judgment call should be shown and discussed before proceeding — e.g.
+run one MLflow experiment, show the results, and ask before moving to the
+next one, rather than running all 4 experiments end-to-end and reporting back
+only at the finish line. The user wants to see and participate in these
+decisions as they happen, not review them after the fact.
+
 ## Status
 
 **Planning and documentation phase complete.** All course material reviewed, all major
@@ -72,8 +87,9 @@ written yet** — `app/`, `training/`, `optimization/`, `dags/`, `frontend/`, `m
 created per `docs/architecture.md`'s repo structure.
 
 **Blocked on:** AWS CLI configuration (needed to provision the S3 bucket for DVC, the
-ECR repository, and the IAM OIDC role for GitHub Actions — see `docs/architecture.md` §
-CI/CD and § AWS architecture). Everything else can proceed in parallel.
+ECR repository, the IAM OIDC role for GitHub Actions, and the App Runner service for
+the real deployment — see `docs/architecture.md` § CI/CD and § AWS architecture).
+Everything else can proceed in parallel.
 
 When resumed, read `docs/architecture.md` and `docs/technical-decisions.md` first —
 they supersede any older assumptions in this file.

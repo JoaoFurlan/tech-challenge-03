@@ -156,10 +156,23 @@ practice) keeps each stage's search space clean and comparable.
 with `token.actions.githubusercontent.com`), no static AWS keys stored as
 GitHub secrets — standard industry security practice.
 
-**EC2, not Lambda/Batch/SageMaker, for real-time inference:** the scenario
-requires an immediate response (hospital triage). EC2 keeps the model loaded
-in memory permanently, without Lambda's cold-start problem. Full
-justification in the README.
+**App Runner, not EC2/Lambda/Batch/SageMaker, for real-time inference:** the
+scenario requires an immediate response (hospital triage), which rules out
+Lambda's per-invocation cold start — the model needs to stay loaded in memory
+continuously. The challenge only requires this decision to be written up in
+the README (not deployed), but we chose to actually deploy it: App Runner
+gives the same always-warm container behavior as EC2 without EC2's
+operational overhead — no instance to provision, no SSH, no security groups,
+no OS patching. Point it at a tagged image in ECR and it runs. Full
+justification (App Runner vs. Lambda vs. Batch vs. SageMaker vs. raw EC2)
+still goes in the README, since that section is graded regardless of whether
+deployment is real.
+
+**Why deploy for real when the challenge doesn't require it:** a live,
+demoable endpoint is a stronger STAR-video "Result" than a localhost screen
+recording, and App Runner's low operational cost (nothing to manage or patch)
+makes the extra realism cheap enough to justify. Torn down after the
+grading/demo window — no need to keep it running afterward.
 
 ## Airflow in standalone mode
 

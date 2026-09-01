@@ -204,14 +204,25 @@ Authentication via **OIDC** (IAM role trusting `token.actions.githubusercontent.
 scoped to this repo) — no static AWS keys stored as GitHub secrets. Image tagged
 by commit SHA (never `latest`).
 
-## AWS architecture (real-time deploy)
+## AWS architecture (real-time deploy) — actually deployed, not just written up
 
-- **EC2** — always-on inference, model stays loaded in memory, predictable low
-  latency (no Lambda cold-start risk for a clinical triage tool).
-- **ECR** — image registry, fed by CI.
+The challenge only requires this decision to be documented in the README, not
+deployed. We're deploying it for real anyway — a live endpoint is a stronger
+STAR-video "Result" than a localhost recording, and the chosen service has low
+enough operational overhead to make that extra realism cheap.
+
+- **App Runner** — always-on inference, model stays loaded in memory (no
+  Lambda-style per-invocation cold start), fully managed: points at a tagged
+  image in ECR and runs it, no EC2 instance, no SSH, no security groups, no OS
+  patching. Chosen over raw EC2 for the same real-time rationale with far less
+  operational overhead.
+- **ECR** — image registry, fed by CI; App Runner deploys directly from a
+  tagged image here.
 - **S3** — DVC remote for the dataset.
-- Full written justification (batch vs. real-time, EC2 vs. Lambda vs. Batch vs.
-  SageMaker) goes in `README.md`.
+- Full written justification (batch vs. real-time, App Runner vs. Lambda vs.
+  Batch vs. SageMaker vs. raw EC2) still goes in `README.md` — that section is
+  graded regardless of whether deployment is real.
+- Service torn down after the grading/demo window to avoid ongoing billing.
 
 ## Airflow
 
