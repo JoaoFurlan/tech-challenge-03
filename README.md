@@ -18,6 +18,13 @@ Deployed automatically by CI on every push to `main` — GitHub Actions runs
 lint → test → build → push to ECR → deploy to Beanstalk → verify health,
 no manual steps.
 
+**Demo frontend** (non-graded extra, `frontend/streamlit_app.py`): a
+Streamlit UI over `/predict`, hosted separately on **Streamlit Community
+Cloud** (free) rather than a second AWS environment — deliberately kept off
+the same AWS account to avoid doubling Free Tier EC2 instance-hours for a
+component that's just an HTTP client. Deploy URL to be added here once set
+up.
+
 ## Dataset
 
 [Medical Abstracts TC Corpus](https://www.kaggle.com/datasets/chaitanyakck/medical-text)

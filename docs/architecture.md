@@ -363,6 +363,21 @@ endpoint over HTTP (doesn't duplicate model logic). Purely for a better visual
 in the STAR video than Swagger docs/curl — explicitly called out as a nicety,
 not a required deliverable.
 
+**Hosted on Streamlit Community Cloud, not AWS** — deliberately kept off the
+same AWS account as the API. Running it as a second always-on Beanstalk
+environment would mean a second continuously-running EC2 instance, doubling
+Free Tier instance-hour consumption for a component that's just a thin HTTP
+client (no model, no inference). Streamlit Cloud is free, deploys directly
+from this GitHub repo (`frontend/streamlit_app.py`, `frontend/
+requirements.txt`), and talks to the AWS-hosted API over the public internet
+via an `API_URL` secret — the two services stay fully decoupled, same as any
+other client of the API. `frontend/requirements.txt` exists only because
+Streamlit Cloud doesn't understand `uv`'s `pyproject.toml`/`uv.lock` format
+(misreads `pyproject.toml` as Poetry format) — scoped to just what the
+frontend imports (`streamlit`, `requests`), not the full project dependency
+set, to keep the Cloud build fast and avoid installing unused
+FastAPI/onnxruntime packages meant for the serving app.
+
 ## Explicitly out of scope (see `technical-decisions.md` for full rationale)
 
 Kubernetes/HPA/KEDA, Canary/Shadow deployment, drift detection implementation

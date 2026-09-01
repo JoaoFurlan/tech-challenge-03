@@ -478,6 +478,24 @@ Separate, simple application calling the API's `/predict` endpoint over HTTP
 than showing Swagger docs or a curl command. Explicitly marked as not
 required.
 
+**Hosted on Streamlit Community Cloud, not the same AWS account as the
+API.** Considered running it as a second Elastic Beanstalk environment
+(consistent with the rest of the stack) but rejected: that would mean a
+second continuously-running EC2 instance for a component that does no
+inference at all, just an HTTP client — doubling Free Tier instance-hour
+consumption for no real benefit, straight after having to pivot the API's
+own deployment specifically *because of* that same budget constraint (see
+"Actually deployed on Elastic Beanstalk, not App Runner" above). Streamlit
+Cloud is free, deploys straight from this repo, and keeps the frontend and
+API genuinely decoupled — it reaches the API the same way any external
+client would, over the public `medsys.us-east-1.elasticbeanstalk.com`
+endpoint, not via any AWS-internal networking. One real cost: Streamlit
+Cloud doesn't support `uv`'s `pyproject.toml`/`uv.lock` format (misreads
+`pyproject.toml` as Poetry format), so `frontend/requirements.txt` exists
+as a plain, minimally-scoped dependency list just for this one deployment
+target — a small, contained bit of duplication versus a second AWS
+environment's worth of ops overhead.
+
 ## Out of scope (deliberately)
 
 Kubernetes/HPA/KEDA, Canary/Shadow deployment, implemented drift detection
