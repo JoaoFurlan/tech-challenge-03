@@ -29,6 +29,16 @@ Moderate imbalance (~3.2x between largest and smallest class), well above the
 challenge's 2,000-sample minimum. Hosted on **S3**, versioned via **DVC** — the
 training pipeline pulls it (`dvc pull`), it isn't committed as a raw CSV.
 
+**Processed dataset: 8,298 documents**, not 14,438. Kaggle ships this corpus
+pre-split into train (11,550 rows) and test (2,888 rows); combining them
+(`training/data.py`) revealed 988 abstracts leaking across that split, and
+2,929 abstracts carrying *conflicting* category labels (the same document
+tagged under 2+ categories — see `technical-decisions.md`). Both the original
+split and the ambiguous documents are discarded; the clean 8,298 documents are
+re-split ourselves (~15% held-out test, fixed `random_state=42`, stratified).
+Class balance is preserved post-cleaning (~3.4x, general pathological
+conditions 2,394 / digestive 699).
+
 ## Urgency mapping (deterministic, post-prediction)
 
 The trained classifier predicts one of the 5 categories. Urgency is then derived

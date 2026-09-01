@@ -31,6 +31,52 @@ misclassified as "general pathological condition," for example, would
 silently fall through to "normal" downstream — this is the system's most
 dangerous failure mode, and it's what the confusion matrix exists to catch.
 
+## Re-splitting the dataset and dropping ambiguous labels
+
+**The problem:** Kaggle ships this corpus pre-split into train (11,550 rows)
+and test (2,888 rows). Combining them to build our own split (rather than
+using the shipped one — see split rationale below) surfaced two data-quality
+issues invisible from either file alone:
+
+1. **988 abstracts appear in both the original train and test files.** A
+   model trained on the shipped train split and evaluated on the shipped test
+   split could have been partly scoring on memorized examples — the official
+   split has train/test leakage built in.
+2. **2,929 abstracts appear more than once with *conflicting* category
+   labels** — same document text, different `condition_label`. Critically,
+   *zero* duplicate groups repeat with a matching label: every single
+   duplicate is a genuine conflict. Inspecting examples confirmed why:
+   "general pathological conditions" is involved in the large majority of
+   conflicting pairs (e.g. `cardiovascular diseases` + `general pathological
+   conditions`, 738 pairs), consistent with the source corpus having
+   originally multi-labeled some documents (a case report can plausibly span
+   a specific disease system *and* the generic bucket), which this
+   single-label Kaggle release exploded into separate rows — one per label —
+   rather than preserving as multi-label.
+
+**Why this matters beyond data hygiene:** it collides directly with the
+urgency-mapping design. "General pathological conditions" maps to baseline
+**normal**; several of its most common conflict partners
+(`cardiovascular diseases`) map to **urgent**. Whichever label got kept for
+an ambiguous document would silently decide its urgency tier — arbitrarily.
+
+**Decision:** combine train+test, then **drop all 2,929 ambiguous documents
+entirely** rather than keeping one label per document. Considered and
+rejected: (a) keeping the first-occurring row — simplest, preserves the full
+11,227-document count, but the kept label is incidental to Kaggle's row
+order, effectively injecting label noise into ~26% of the corpus with no
+principled justification; (b) a safety-biased tiebreak resolving conflicts
+toward whichever label maps to the higher urgency tier — ties the cleanup
+decision to the triage-safety narrative used elsewhere in this document, but
+adds a bespoke rule that's harder to justify as *data cleaning* rather than
+*model behavior in disguise*. Dropping ambiguous documents outright keeps
+every remaining label unambiguous ground truth, is the easiest of the three
+to explain and defend, and still leaves 8,298 documents — comfortably above
+the challenge's 2,000-sample floor — with class balance essentially
+unchanged (~3.4x vs. the original ~3.2x). The held-out test set is then
+carved from this clean pool with a fixed `random_state`, per the
+train/validation/test split decision below.
+
 ## Candidate models
 
 **Choice:** Logistic Regression, LinearSVC, Multinomial Naive Bayes, Complement
