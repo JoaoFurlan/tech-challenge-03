@@ -1,0 +1,5 @@
+[core]
+    remote = medsys-remote
+['remote "medsys-remote"']
+    url = s3://medsys-dvc-tech-challenge-03/dvc-store
+    region = us-east-1
