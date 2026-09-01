@@ -276,15 +276,31 @@ artifacts). Uvicorn as the ASGI server.
 
 ## CI/CD
 
-GitHub Actions: **lint (ruff) → test (pytest) → build → push to ECR**.
-Authentication via **OIDC** (IAM role trusting `token.actions.githubusercontent.com`,
-scoped to this repo) — no static AWS keys stored as GitHub secrets. Image tagged
-by commit SHA (never `latest`).
+GitHub Actions: **lint (ruff) → test (pytest) → build → push to ECR → deploy
+to Elastic Beanstalk**. Fully automated end to end — a push to `main` results
+in a live, verified deployment with no manual steps. Authentication via
+**OIDC** (IAM role trusting `token.actions.githubusercontent.com`, scoped to
+this repo) — no static AWS keys stored as GitHub secrets. Image tagged by
+commit SHA (never `latest`).
 
 The build step needs `models/pipeline_fp32.onnx` (DVC-tracked, pushed to
 S3 — see § Latency optimization result) available in the Docker build
 context, so it runs `dvc pull` before `docker build`. The IAM role used
 for CI needs S3 read added alongside its ECR push permissions for this.
+
+**Deploy step**: rewrites `Dockerrun.aws.json`'s image tag to the new commit
+SHA, uploads it to Beanstalk's S3 bucket, creates a new application version
+(tolerating "already exists" for idempotency, e.g. on a job retry), updates
+the environment, then polls `describe-environments` and fails the job if
+health doesn't come back `Green` — a broken deploy shows up in CI, not just
+silently on the console. The role's Beanstalk permissions ended up needing
+the AWS-managed `AdministratorAccess-AWSElasticBeanstalk` policy rather than
+a hand-scoped one — Beanstalk's API provisions EC2/CloudFormation/
+AutoScaling resources and several S3 bucket-admin operations under the hood
+even for a single-instance environment, a genuinely broad, evolving
+permission surface (hit real API changes mid-session, e.g.
+`s3:PutBucketOwnershipControls`) that a hand-maintained scoped policy would
+keep falling behind on. Full story in `technical-decisions.md`.
 
 ## AWS architecture (real-time deploy) — actually deployed, not just written up
 

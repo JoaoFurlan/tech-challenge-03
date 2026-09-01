@@ -14,6 +14,9 @@ inference API (`/predict`, `/health`, `/metrics`) running on AWS Elastic
 Beanstalk. Not the documented target (App Runner — see `docs/architecture.md`
 § AWS architecture for why); the written justification below reflects the
 documented decision regardless. Torn down after the grading/demo window.
+Deployed automatically by CI on every push to `main` — GitHub Actions runs
+lint → test → build → push to ECR → deploy to Beanstalk → verify health,
+no manual steps.
 
 ## Dataset
 

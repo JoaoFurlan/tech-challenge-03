@@ -431,6 +431,35 @@ documented pivot forced by a budget constraint discovered late, not a
 design change — same category as the MLflow filesystem-backend correction
 and the `dvc`/`pygtrie` CI dependency fix earlier in this document.
 
+**CI auto-deploys to Beanstalk on every push to main — and the IAM policy
+for it ended up needing to be AWS-managed, not hand-scoped.** After the
+first successful manual deployment, extended the `build-and-push` job to
+rewrite `Dockerrun.aws.json`'s image tag, create a new Beanstalk
+application version, and update the environment automatically — verified
+by polling `describe-environments` afterward and failing the job if health
+isn't `Green`, so a broken deploy is visible in CI rather than requiring a
+manual console check.
+
+Getting the IAM permissions right took several rounds, each surfacing a
+genuinely new requirement rather than a mistake in the previous fix:
+`elasticbeanstalk:UpdateEnvironment` itself, then `s3:CreateBucket` on
+Beanstalk's own storage bucket (needed even though the bucket already
+existed — IAM authorization happens before S3's idempotent "you already
+own this" check), then `s3:PutBucketOwnershipControls` (likely reflecting
+an S3 default-security change made after older example policies were
+written). Research at that point turned up that a properly-scoped policy
+for this actually needs wildcard-resource `autoscaling:*`/
+`cloudformation:*`/`ec2:*` too, since Beanstalk provisions those services
+under the hood via CloudFormation even for a single-instance environment —
+at which point hand-scoping had lost its point. Switched to the AWS-managed
+`AdministratorAccess-AWSElasticBeanstalk` policy (the current replacement
+for the now-deprecated `AWSElasticBeanstalkFullAccess`) instead of
+continuing to chase individual permissions one at a time. Broader than the
+scoped-policy approach used for ECR/DVC's S3 access, but the pragmatic
+choice given Beanstalk's own API surface is broad and evolving in ways a
+hand-maintained policy can't keep pace with — an explicit, deliberate
+trade-off, not the path of least resistance taken by default.
+
 ## Airflow in standalone mode
 
 **Decision:** `airflow standalone` (SQLite backend), not the official
