@@ -44,7 +44,10 @@ jobs:
       id-token: write
     env:
       AWS_REGION: us-east-1
+      AWS_ACCOUNT_ID: "033266804343"
       ECR_REPOSITORY: medsys-api
+      EB_APP_NAME: medsys-triage
+      EB_ENV_NAME: Medsys-triage-env
     steps:
       - uses: actions/checkout@v7
       # setup-uv stopped publishing major/minor tags as of v8.0.0 (a
@@ -89,3 +92,47 @@ jobs:
         run: |
           docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
           docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+      # Dockerrun.aws.json pins a specific image tag (we never push
+      # `latest`), so redeploying means rewriting that tag and pushing a
+      # new Beanstalk application version -- Beanstalk doesn't watch ECR
+      # for new images on its own.
+      - name: Update Dockerrun.aws.json with the new image tag
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          jq --arg image "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" \
+            '.Image.Name = $image' Dockerrun.aws.json > Dockerrun.aws.json.new
+          mv Dockerrun.aws.json.new Dockerrun.aws.json
+
+      - name: Deploy to Elastic Beanstalk
+        env:
+          VERSION_LABEL: sha-${{ github.sha }}
+        run: |
+          EB_BUCKET="elasticbeanstalk-${AWS_REGION}-${AWS_ACCOUNT_ID}"
+          aws s3 cp Dockerrun.aws.json "s3://$EB_BUCKET/$VERSION_LABEL/Dockerrun.aws.json"
+          aws elasticbeanstalk create-application-version \
+            --application-name "$EB_APP_NAME" \
+            --version-label "$VERSION_LABEL" \
+            --source-bundle "S3Bucket=$EB_BUCKET,S3Key=$VERSION_LABEL/Dockerrun.aws.json"
+          aws elasticbeanstalk update-environment \
+            --environment-name "$EB_ENV_NAME" \
+            --version-label "$VERSION_LABEL"
+
+          echo "Waiting for the environment update to finish..."
+          for _ in $(seq 1 30); do
+            STATUS=$(aws elasticbeanstalk describe-environments \
+              --environment-names "$EB_ENV_NAME" --query 'Environments[0].Status' --output text)
+            echo "Status: $STATUS"
+            [ "$STATUS" = "Ready" ] && break
+            sleep 20
+          done
+
+          HEALTH=$(aws elasticbeanstalk describe-environments \
+            --environment-names "$EB_ENV_NAME" --query 'Environments[0].Health' --output text)
+          echo "Final health: $HEALTH"
+          if [ "$HEALTH" != "Green" ]; then
+            echo "::error::Beanstalk environment health is '$HEALTH' (expected Green) after deployment"
+            exit 1
+          fi
