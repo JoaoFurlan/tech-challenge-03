@@ -112,10 +112,28 @@ jobs:
         run: |
           EB_BUCKET="elasticbeanstalk-${AWS_REGION}-${AWS_ACCOUNT_ID}"
           aws s3 cp Dockerrun.aws.json "s3://$EB_BUCKET/$VERSION_LABEL/Dockerrun.aws.json"
-          aws elasticbeanstalk create-application-version \
+
+          # Idempotent: a version label collision only happens if a prior
+          # run's create-application-version succeeded but a later step
+          # (e.g. update-environment) then failed and got retried -- not a
+          # real error in that case, just re-deploy the existing version.
+          set +e
+          CREATE_OUTPUT=$(aws elasticbeanstalk create-application-version \
             --application-name "$EB_APP_NAME" \
             --version-label "$VERSION_LABEL" \
-            --source-bundle "S3Bucket=$EB_BUCKET,S3Key=$VERSION_LABEL/Dockerrun.aws.json"
+            --source-bundle "S3Bucket=$EB_BUCKET,S3Key=$VERSION_LABEL/Dockerrun.aws.json" 2>&1)
+          CREATE_STATUS=$?
+          set -e
+          if [ $CREATE_STATUS -ne 0 ]; then
+            if echo "$CREATE_OUTPUT" | grep -q "already exists"; then
+              echo "Application version $VERSION_LABEL already exists -- deploying it as-is."
+            else
+              echo "$CREATE_OUTPUT"
+              echo "::error::create-application-version failed"
+              exit 1
+            fi
+          fi
+
           aws elasticbeanstalk update-environment \
             --environment-name "$EB_ENV_NAME" \
             --version-label "$VERSION_LABEL"
