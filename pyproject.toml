@@ -13,6 +13,7 @@ dependencies = [
 
 [project.optional-dependencies]
 frontend = [
+    "requests>=2.34.2",
     "streamlit>=1.62.0",
 ]
 
