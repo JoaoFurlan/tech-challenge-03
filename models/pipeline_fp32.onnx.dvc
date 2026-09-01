@@ -1,0 +1,5 @@
+outs:
+- md5: 1960d5b25fd80c53c0aad91d9f39877f
+  size: 422428
+  hash: md5
+  path: pipeline_fp32.onnx

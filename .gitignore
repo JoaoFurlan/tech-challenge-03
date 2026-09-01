@@ -15,9 +15,11 @@ venv/
 .python-version
 
 # Data & model artifacts
+# (models/ itself isn't ignored -- the DVC .dvc pointer files for tracked
+# artifacts live inside it and need to be git-tracked; the binary patterns
+# below still block the actual artifacts from ever being committed)
 *.csv
 data/
-models/
 *.onnx
 *.pkl
 *.joblib
