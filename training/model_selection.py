@@ -25,6 +25,7 @@ from sklearn.svm import LinearSVC
 
 from training import mlflow_config
 from training.data import load_pool_and_test
+from training.urgency import tier_rank
 
 RANDOM_STATE = 42
 N_FOLDS = 5
@@ -134,11 +135,20 @@ def run() -> list[dict]:
                     per_class_metrics[f"recall_{slug}"] = report[category]["recall"]
                     per_class_metrics[f"precision_{slug}"] = report[category]["precision"]
 
+                true_tier = y.map(tier_rank)
+                pred_tier = y_pred_oof.map(tier_rank)
+                tier_accuracy = float((true_tier == pred_tier).mean())
+                undertriage_rate = float((pred_tier < true_tier).mean())
+                overtriage_rate = float((pred_tier > true_tier).mean())
+
                 mlflow.log_metrics(
                     {
                         "f1_macro_mean": f1_macro_mean,
                         "f1_macro_std": f1_macro_std,
                         "accuracy": accuracy,
+                        "tier_accuracy": tier_accuracy,
+                        "undertriage_rate": undertriage_rate,
+                        "overtriage_rate": overtriage_rate,
                         **per_class_metrics,
                     }
                 )
@@ -160,13 +170,15 @@ def run() -> list[dict]:
                         "tfidf": tfidf_name,
                         "f1_macro_mean": f1_macro_mean,
                         "f1_macro_std": f1_macro_std,
+                        "undertriage_rate": undertriage_rate,
                         **{f"recall_{slug}": r for slug, r in recalls.items()},
                     }
                 )
                 recall_str = "  ".join(f"{slug}={r:.3f}" for slug, r in recalls.items())
                 print(
                     f"{model_name:20s} {tfidf_name:12s} "
-                    f"f1_macro={f1_macro_mean:.4f}±{f1_macro_std:.4f}  {recall_str}"
+                    f"f1_macro={f1_macro_mean:.4f}±{f1_macro_std:.4f}  "
+                    f"undertriage={undertriage_rate:.4f}  {recall_str}"
                 )
 
     return results
