@@ -224,6 +224,47 @@ point was already close to the safety frontier, while explaining why
 (unigram-only is what matters, and the conservative config was already
 there).
 
+## Hyperparameter-tuning result and an MLflow autolog bug
+
+**Tooling note:** planned as `GridSearchCV` + `mlflow.sklearn.autolog()`
+(per `architecture.md`), but autolog's per-candidate child-run creation
+throws internally on the installed MLflow version
+(`'NoneType' object has no attribute '_to_mlflow_entity'`) — confirmed
+only 1 of 24 expected runs was actually logged, despite all 24 candidates
+being evaluated correctly under the hood (`cv_results_` was intact,
+only MLflow visibility was broken). Switched to the same manual
+per-combination logging already used in `model_selection.py` /
+`feature_engineering.py`, verified to reproduce identical metrics before
+discarding the `GridSearchCV` run. Same category of issue as the
+filesystem-tracking-backend deprecation earlier — a version-driven
+tooling correction, not a design change.
+
+**Finding: `fit_prior` has zero effect on ComplementNB.** Every
+`fit_prior=True`/`False` pair produced bit-for-bit identical metrics
+across all 12 `alpha`/`norm` combinations. This isn't a bug in our
+pipeline — sklearn's `ComplementNB` implementation doesn't incorporate
+the class-prior term into its decision rule at all, per the original
+paper's formulation (unlike `MultinomialNB`, where `fit_prior` does
+matter). Confirmed empirically rather than assumed; not worth keeping as
+a tuning dimension going forward.
+
+**Result: `alpha=0.5, norm=True`** — F1-macro 0.769, `undertriage_rate`
+0.048. The same F1-macro-vs-undertriage tension recurred at this third
+level (after model choice and TF-IDF config): the F1-macro-best point
+(`alpha=0.1, norm=False`, F1=0.777) has *worse* undertriage than our
+prior baseline (0.056 vs 0.053) — reopening the exact tension we'd
+already resolved in favor of safety at model-selection. `norm=True`
+(ComplementNB's optional weight-renormalization step from the original
+paper) is consistently what buys undertriage improvement across the
+whole grid, at a real F1-macro cost. Of the three points on that
+tradeoff frontier — max-F1 (`alpha=0.1, norm=False`), max-safety
+(`alpha=0.05, norm=True`, undertriage 0.038 but F1 down to 0.751), and
+this balanced middle — chose the middle: a meaningful undertriage
+improvement over the pre-tuning baseline (~9% relative reduction) without
+the steepest F1 cost of the max-safety point. Consistent with the
+safety-first lean established at model-selection, without over-rotating
+into it a second time.
+
 ## Train/validation/test split and data leakage
 
 **Decision:** a test set (~15–20%) is carved out once at the start, never

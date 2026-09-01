@@ -178,7 +178,7 @@ loaded by FastAPI, and exported to ONNX — one artifact, no train/serve mismatc
 |---|---|---|---|
 | `model-selection` | 10 | 5 models × 2 TF-IDF configs | F1-macro + `undertriage_rate` (tier-aware, co-decisive — see `technical-decisions.md`) |
 | `feature-engineering` | 36 + 6 follow-up | full TF-IDF grid + max_df/stop_words follow-up, ComplementNB fixed | F1-macro + `undertriage_rate` |
-| `hyperparameter-tuning` | ~10–30 | ComplementNB hyperparams (`alpha`, `norm`), via `GridSearchCV` | F1-macro + `undertriage_rate` |
+| `hyperparameter-tuning` | 24 | ComplementNB hyperparams (`alpha`, `norm`, `fit_prior`) | F1-macro + `undertriage_rate` |
 | `latency-optimization` | ~3 | baseline vs. ONNX FP32 vs. ONNX INT8-quantized | P50/P95/P99 latency |
 
 **Model-selection result: ComplementNB (conservative TF-IDF)** —
@@ -196,6 +196,23 @@ TF-IDF config was already close to the safety frontier; bigrams win on
 raw F1-macro but consistently worsen undertriage_rate, so unigram-only was
 kept. `max_df` tested with no measurable effect. Full reasoning in
 `technical-decisions.md`.
+
+**Hyperparameter-tuning result: `alpha=0.5, norm=True`** (`fit_prior`
+confirmed to have zero effect on ComplementNB, dropped as a tuning
+dimension) — F1-macro 0.769, `undertriage_rate` 0.048, a ~9% relative
+undertriage improvement over the pre-tuning baseline for a small F1-macro
+cost. Chosen as the balanced middle of a 3-point tradeoff frontier rather
+than the F1-macro-best or undertriage-best extremes. Also: planned via
+`GridSearchCV` + `mlflow.sklearn.autolog()`, but autolog's child-run
+creation is broken on the installed MLflow version — switched to manual
+per-combination logging (same as model-selection/feature-engineering).
+Full reasoning in `technical-decisions.md`.
+
+**Final pipeline**: ComplementNB(`alpha=0.5, norm=True`) +
+TfidfVectorizer(`ngram_range=(1,1), max_features=10000, min_df=2,
+sublinear_tf=False, stop_words="english"`) — this is what
+`training/train_final.py` retrains on the full pool and evaluates once on
+the held-out test set.
 
 ### Latency optimization (Etapa 4) — branches by winning model type
 
