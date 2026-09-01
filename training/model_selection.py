@@ -36,6 +36,12 @@ CATEGORIES = [
     "nervous system diseases",
 ]
 
+
+def category_slug(category: str) -> str:
+    """Short, consistent metric-name slug: first word of the category name."""
+    return category.split()[0]
+
+
 TFIDF_CONFIGS = {
     "conservative": {
         "ngram_range": (1, 1),
@@ -124,7 +130,7 @@ def run() -> list[dict]:
 
                 per_class_metrics = {}
                 for category in CATEGORIES:
-                    slug = category.replace(" ", "_")
+                    slug = category_slug(category)
                     per_class_metrics[f"recall_{slug}"] = report[category]["recall"]
                     per_class_metrics[f"precision_{slug}"] = report[category]["precision"]
 
@@ -147,17 +153,17 @@ def run() -> list[dict]:
                 mlflow.log_figure(fig, "confusion_matrix.png")
                 plt.close(fig)
 
-                recalls = {c: report[c]["recall"] for c in CATEGORIES}
+                recalls = {category_slug(c): report[c]["recall"] for c in CATEGORIES}
                 results.append(
                     {
                         "model": model_name,
                         "tfidf": tfidf_name,
                         "f1_macro_mean": f1_macro_mean,
                         "f1_macro_std": f1_macro_std,
-                        **{f"recall_{c}": r for c, r in recalls.items()},
+                        **{f"recall_{slug}": r for slug, r in recalls.items()},
                     }
                 )
-                recall_str = "  ".join(f"{c.split()[0]}={r:.3f}" for c, r in recalls.items())
+                recall_str = "  ".join(f"{slug}={r:.3f}" for slug, r in recalls.items())
                 print(
                     f"{model_name:20s} {tfidf_name:12s} "
                     f"f1_macro={f1_macro_mean:.4f}±{f1_macro_std:.4f}  {recall_str}"
