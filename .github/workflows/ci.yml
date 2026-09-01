@@ -48,6 +48,12 @@ jobs:
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
+          # v4 attaches session tags (repo/actor/workflow/...) by default,
+          # which needs the trust policy to also grant sts:TagSession --
+          # ours only grants AssumeRoleWithWebIdentity, so the whole call
+          # was rejected. We don't use the tags for anything, so skip them
+          # rather than widen the trust policy further.
+          role-skip-session-tagging: true
 
       # models/pipeline_fp32.onnx is DVC-tracked (S3), not committed to
       # git -- needs the role's inline policy to also grant S3 read on
