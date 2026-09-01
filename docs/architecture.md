@@ -179,7 +179,7 @@ loaded by FastAPI, and exported to ONNX — one artifact, no train/serve mismatc
 | `model-selection` | 10 | 5 models × 2 TF-IDF configs | F1-macro + `undertriage_rate` (tier-aware, co-decisive — see `technical-decisions.md`) |
 | `feature-engineering` | 36 + 6 follow-up | full TF-IDF grid + max_df/stop_words follow-up, ComplementNB fixed | F1-macro + `undertriage_rate` |
 | `hyperparameter-tuning` | 24 | ComplementNB hyperparams (`alpha`, `norm`, `fit_prior`) | F1-macro + `undertriage_rate` |
-| `latency-optimization` | ~3 | baseline vs. ONNX FP32 vs. ONNX INT8-quantized | P50/P95/P99 latency |
+| `latency-optimization` | 3 | baseline vs. ONNX FP32 vs. ONNX INT8-quantized | P50/P95/P99 latency |
 
 **Model-selection result: ComplementNB (conservative TF-IDF)** —
 F1-macro 0.765, `undertriage_rate` 0.053, chosen over the raw F1-macro
@@ -223,6 +223,26 @@ overfitting to the CV folds. Artifact saved to `models/pipeline.joblib`
 and logged to MLflow (`final-model` experiment) — this is what the FastAPI
 app loads and what `optimization/export_and_benchmark.py` exports to
 ONNX.
+
+**Latency-optimization result**: ComplementNB is neither of the two
+branches this section originally anticipated (see below) — treated as the
+linear-model branch, since its decision rule is a dot product against a
+dense per-class weight matrix, architecturally the same shape as a linear
+model's `coef_`.
+
+| Variant | P50 | P95 | P99 | F1-macro | Size |
+|---|---|---|---|---|---|
+| sklearn baseline | 0.595ms | 0.814ms | 1.040ms | 0.7786 | 1,233KB |
+| **ONNX FP32 (chosen)** | **0.135ms** | **0.263ms** | **0.339ms** | 0.7786 | 413KB |
+| ONNX INT8 | 0.163ms | 0.281ms | 0.397ms | 0.7803 | 267KB |
+
+**Served artifact: ONNX FP32** — 4.4x faster than the sklearn baseline at
+P50, 3x smaller, mathematically exact (no accuracy change). INT8
+quantization was *slower* than FP32 here, not faster — a genuine negative
+finding at this model scale, not a win glossed over because the plan
+called for it. Full reasoning, including two tooling workarounds needed
+to get quantization running at all on this graph, in
+`technical-decisions.md`.
 
 ### Latency optimization (Etapa 4) — branches by winning model type
 

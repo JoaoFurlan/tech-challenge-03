@@ -70,3 +70,24 @@ tuning, not just model choice.
 | Accuracy | 0.7880 |
 | Undertriage rate (dangerous misses) | 0.0498 |
 | Overtriage rate (false alarms) | 0.1446 |
+
+## Latency optimization
+
+Exported to ONNX (`skl2onnx`) and compared against dynamic INT8
+quantization, benchmarked as full single-document `/predict` latency
+(TF-IDF vectorization + inference), 500 requests:
+
+| Variant | P50 | P95 | P99 | F1-macro | Size |
+|---|---|---|---|---|---|
+| sklearn baseline | 0.595ms | 0.814ms | 1.040ms | 0.7786 | 1,233KB |
+| **ONNX FP32 (served)** | **0.135ms** | **0.263ms** | **0.339ms** | 0.7786 | 413KB |
+| ONNX INT8 | 0.163ms | 0.281ms | 0.397ms | 0.7803 | 267KB |
+
+**Served: ONNX FP32** — 4.4x faster than the sklearn baseline at P50, 3x
+smaller, mathematically exact (identical F1-macro, not an approximation).
+INT8 quantization was actually *slower* than FP32 here, not faster — at
+this scale the whole model already runs in a fraction of a millisecond,
+so quantization's per-call dequantization overhead outweighs its compute
+savings. It does deliver a real size win (35% smaller than FP32) if
+footprint matters more than latency. Full reasoning in
+`docs/technical-decisions.md`.

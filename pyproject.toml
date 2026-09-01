@@ -15,6 +15,7 @@ dependencies = [
     "prometheus-client>=0.26.0",
     "scikit-learn>=1.9.0",
     "skl2onnx>=1.20.0",
+    "sympy>=1.14.0",
     "uvicorn[standard]>=0.52.4",
 ]
 

@@ -307,6 +307,55 @@ appropriate technique here, not a lesser alternative.
 (preprocessing + inference + response), not just `model.predict()` —
 preprocessing can be 40–60% of total latency in an unoptimized system.
 
+**ComplementNB is neither branch, and was treated as the linear one.**
+The winning model (see model-selection above) is Naive Bayes, not
+anticipated by either branch above. Its decision rule — a dot product
+against a dense per-class weight matrix (`feature_log_prob_`) — is
+architecturally the same shape as a linear model's `coef_`, so it was
+exported and quantized the same way as the linear branch. Random Forest's
+pruning technique has no analogue here: pruning operates on tree
+structure, and ComplementNB has none.
+
+**Result** (500-request benchmark, single document at a time, `models/`):
+
+| Variant | P50 | P95 | P99 | F1-macro | Size |
+|---|---|---|---|---|---|
+| sklearn baseline | 0.595ms | 0.814ms | 1.040ms | 0.7786 | 1,233KB |
+| ONNX FP32 | **0.135ms** | **0.263ms** | **0.339ms** | 0.7786 (exact) | 413KB |
+| ONNX INT8 (dynamic) | 0.163ms | 0.281ms | 0.397ms | 0.7803 | 267KB |
+
+**Chosen: ONNX FP32 as the served artifact.** ONNX export alone is the
+dominant win — 4.4x faster at P50, 3x smaller, and mathematically exact
+(F1-macro unchanged, not approximated). INT8 quantization is
+counterintuitively *slower* than FP32 here (0.163ms vs. 0.135ms P50), not
+faster — at this scale, the whole model already runs in a fraction of a
+millisecond, so the dequantization overhead added around each quantized
+op outweighs the compute savings from smaller integer math. Quantization
+only pays off on latency when compute time dominates over per-call
+overhead, which isn't the case for a model this small. What INT8 does
+deliver is a real size reduction (35% smaller than FP32) — a legitimate
+choice if container/memory footprint is the priority, just not the
+latency win it's usually reached for. This is reported as a genuine
+negative finding on quantization, not glossed over as a win because the
+plan called for it.
+
+**Two tooling snags getting quantization to run at all**, both specific
+to `skl2onnx`'s text-pipeline graph (`TfIdfVectorizer` + Naive Bayes ops
+aren't the vision/NLP graphs onnxruntime's quantization tooling is
+built/tested against):
+1. `quant_pre_process`'s full symbolic shape inference throws
+   (`"Incomplete symbolic shape inference"`) on this graph — worked
+   around with `skip_symbolic_shape=True`, which still runs basic shape
+   inference + model optimization.
+2. `quantize_dynamic` itself then fails
+   (`"Unable to find data type for weight_name='sum_result'"`) on an
+   intermediate tensor from ComplementNB's decision-rule subgraph the
+   quantizer's type inference can't resolve — worked around with
+   `extra_options={"DefaultTensorType": onnx.TensorProto.FLOAT}`. Needed
+   adding `sympy` as an explicit dependency (required by the symbolic
+   shape inference step, not declared as a transitive dependency by
+   `onnxruntime` itself).
+
 ## Tooling: uv, DVC, MLflow
 
 **uv:** replaces `requirements.txt`/Poetry, no meaningful adoption cost.
