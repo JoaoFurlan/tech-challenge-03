@@ -1,0 +1,39 @@
+[project]
+name = "medsys-api"
+version = "0.1.0"
+description = "Hospital laudo triage classifier — FastAPI inference service (POS Tech Fase 3)"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "dvc[s3]>=3.67.1",
+    "fastapi>=0.141.1",
+    "mlflow>=3.15.2",
+    "numpy>=2.4.6",
+    "onnxruntime>=1.29.0",
+    "pandas>=2.3.3",
+    "prometheus-client>=0.26.0",
+    "scikit-learn>=1.9.0",
+    "skl2onnx>=1.20.0",
+    "uvicorn[standard]>=0.52.4",
+]
+
+[project.optional-dependencies]
+frontend = [
+    "streamlit>=1.62.0",
+]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.1.1",
+    "ruff>=0.16.5",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
