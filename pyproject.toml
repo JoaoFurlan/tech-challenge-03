@@ -4,18 +4,10 @@ version = "0.1.0"
 description = "Hospital laudo triage classifier — FastAPI inference service (POS Tech Fase 3)"
 requires-python = ">=3.11,<3.14"
 dependencies = [
-    "dvc[s3]>=3.67.1",
     "fastapi>=0.141.1",
-    "joblib>=1.6.0",
-    "matplotlib>=3.11.1",
-    "mlflow>=3.15.2",
     "numpy>=2.4.6",
     "onnxruntime>=1.29.0",
-    "pandas>=2.3.3",
     "prometheus-client>=0.26.0",
-    "scikit-learn>=1.9.0",
-    "skl2onnx>=1.20.0",
-    "sympy>=1.14.0",
     "uvicorn[standard]>=0.52.4",
 ]
 
@@ -29,6 +21,19 @@ dev = [
     "httpx>=0.28.1",
     "pytest>=9.1.1",
     "ruff>=0.16.5",
+]
+# Training/optimization tooling -- NOT installed in the served Docker
+# image (see Dockerfile). The app serves the exported ONNX model, not
+# the sklearn pipeline, so it never needs scikit-learn/pandas/mlflow/etc.
+training = [
+    "dvc[s3]>=3.67.1",
+    "joblib>=1.6.0",
+    "matplotlib>=3.11.1",
+    "mlflow>=3.15.2",
+    "pandas>=2.3.3",
+    "scikit-learn>=1.9.0",
+    "skl2onnx>=1.20.0",
+    "sympy>=1.14.0",
 ]
 
 [tool.ruff]
