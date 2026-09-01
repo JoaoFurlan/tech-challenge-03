@@ -293,17 +293,28 @@ deployed. We're deploying it for real anyway — a live endpoint is a stronger
 STAR-video "Result" than a localhost recording, and the chosen service has low
 enough operational overhead to make that extra realism cheap.
 
-- **App Runner** — always-on inference, model stays loaded in memory (no
-  Lambda-style per-invocation cold start), fully managed: points at a tagged
-  image in ECR and runs it, no EC2 instance, no SSH, no security groups, no OS
-  patching. Chosen over raw EC2 for the same real-time rationale with far less
-  operational overhead.
-- **ECR** — image registry, fed by CI; App Runner deploys directly from a
-  tagged image here.
+- **Elastic Beanstalk (single-instance, Docker platform)** — always-on
+  inference, model stays loaded in memory (no Lambda-style per-invocation cold
+  start), rides free-tier EC2 hours while Beanstalk handles provisioning,
+  deployment, and health checks. **Not App Runner**, despite being the
+  documented preference below — App Runner isn't part of AWS Free Tier,
+  discovered only when attempting deployment; switched to Beanstalk as the
+  free-tier-eligible service closest to App Runner's low operational
+  overhead. Single-instance environment type specifically (not "load
+  balanced, auto scaling") — the load-balanced tier provisions an ELB, which
+  is *not* free-tier eligible, defeating the point of the switch.
+  `Dockerrun.aws.json` (repo root) points at the ECR image; since images are
+  tagged by commit SHA (never `latest`), redeploying a new version means
+  updating that file's tag and re-deploying, not automatic.
+- **ECR** — image registry, fed by CI; Beanstalk pulls a tagged image from
+  here per `Dockerrun.aws.json`.
 - **S3** — DVC remote for the dataset.
 - Full written justification (batch vs. real-time, App Runner vs. Lambda vs.
   Batch vs. SageMaker vs. raw EC2) still goes in `README.md` — that section is
-  graded regardless of whether deployment is real.
+  graded regardless of whether deployment is real, and still reflects the
+  reasoning that led to App Runner as the *documented* choice; the actual
+  deployed service differs from it for the Free Tier reason above, called out
+  explicitly rather than silently swapped.
 - Service torn down after the grading/demo window to avoid ongoing billing.
 
 ## Airflow

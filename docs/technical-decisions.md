@@ -412,6 +412,25 @@ recording, and App Runner's low operational cost (nothing to manage or patch)
 makes the extra realism cheap enough to justify. Torn down after the
 grading/demo window — no need to keep it running afterward.
 
+**Actually deployed on Elastic Beanstalk, not App Runner.** Discovered only
+when attempting the real deployment: App Runner isn't part of AWS Free Tier.
+Rather than quietly incur charges or silently rewrite the "why App Runner"
+reasoning above (which is still sound — it's the *documented* choice, and
+what the README's written justification is about), switched the actually
+*deployed* service to Elastic Beanstalk running Docker on a single free-tier
+EC2 instance: same always-warm, no-cold-start property App Runner offered
+(Beanstalk keeps the instance running continuously, doesn't scale to zero
+between requests), rides free-tier EC2 hours, and Beanstalk still absorbs
+most of the manual EC2 ops burden (provisioning, health checks, deployment)
+that App Runner would have avoided — closest free-tier-eligible match to
+the original intent. Specifically the **single-instance** environment type,
+not "load balanced, auto scaling" — that tier provisions an Elastic Load
+Balancer, which is billed separately and isn't Free Tier eligible, which
+would have defeated the entire point of switching. This is a real,
+documented pivot forced by a budget constraint discovered late, not a
+design change — same category as the MLflow filesystem-backend correction
+and the `dvc`/`pygtrie` CI dependency fix earlier in this document.
+
 ## Airflow in standalone mode
 
 **Decision:** `airflow standalone` (SQLite backend), not the official

@@ -1,0 +1,12 @@
+{
+  "AWSEBDockerrunVersion": "1",
+  "Image": {
+    "Name": "033266804343.dkr.ecr.us-east-1.amazonaws.com/medsys-api:29e2a7bc5724bf5b7faa131496d376e712525c39",
+    "Update": "true"
+  },
+  "Ports": [
+    {
+      "ContainerPort": 8000
+    }
+  ]
+}
