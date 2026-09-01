@@ -27,5 +27,44 @@ jobs:
       - run: uv sync --group dev
       - run: uv run pytest -q
 
-  # build-and-push job (docker build -> ECR via OIDC) added once the
-  # Dockerfile and FastAPI app exist — see docs/architecture.md § CI/CD.
+  build-and-push:
+    runs-on: ubuntu-latest
+    needs: test
+    # Only on pushes to main, not PRs -- OIDC credentials shouldn't be
+    # handed to untrusted PR code.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AWS_REGION: us-east-1
+      ECR_REPOSITORY: medsys-api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      # models/pipeline_fp32.onnx is DVC-tracked (S3), not committed to
+      # git -- needs the role's inline policy to also grant S3 read on
+      # the DVC bucket, alongside its ECR push permissions. Run in an
+      # isolated env via uvx -- no need to sync the project's own deps
+      # (dvc lives in the "training" group) just to pull one file.
+      - name: Pull model artifact from DVC
+        run: uvx --from 'dvc[s3]' dvc pull models/pipeline_fp32.onnx
+
+      - name: Log in to ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
