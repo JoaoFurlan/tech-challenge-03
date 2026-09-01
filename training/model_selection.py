@@ -133,7 +133,6 @@ def run() -> list[dict]:
                         "f1_macro_mean": f1_macro_mean,
                         "f1_macro_std": f1_macro_std,
                         "accuracy": accuracy,
-                        "cardiovascular_recall": report["cardiovascular diseases"]["recall"],
                         **per_class_metrics,
                     }
                 )
