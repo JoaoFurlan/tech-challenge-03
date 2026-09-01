@@ -281,6 +281,11 @@ Authentication via **OIDC** (IAM role trusting `token.actions.githubusercontent.
 scoped to this repo) — no static AWS keys stored as GitHub secrets. Image tagged
 by commit SHA (never `latest`).
 
+The build step needs `models/pipeline_fp32.onnx` (DVC-tracked, pushed to
+S3 — see § Latency optimization result) available in the Docker build
+context, so it runs `dvc pull` before `docker build`. The IAM role used
+for CI needs S3 read added alongside its ECR push permissions for this.
+
 ## AWS architecture (real-time deploy) — actually deployed, not just written up
 
 The challenge only requires this decision to be documented in the README, not
