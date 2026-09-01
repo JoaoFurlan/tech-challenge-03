@@ -139,6 +139,50 @@ already cover the same ground with less added complexity. Considered and
 consciously dropped, not overlooked — discussed and weighed explicitly before
 the final call.
 
+**Amendment: urgency-tier metrics added, and used as co-decisive.** Running
+model-selection surfaced a structural problem with F1-macro for this
+specific system: 3 of the 5 categories (neoplasms, nervous, digestive) map
+to the *same* urgency tier ("attention"). F1-macro penalizes confusing those
+three exactly as much as a genuinely dangerous error (e.g. cardiovascular →
+general, a 2-tier drop to "normal"), even though the former has **zero**
+effect on the actual triage output. `training/urgency.py` maps each
+category to its baseline tier; `training/model_selection.py` now also logs
+`tier_accuracy`, `undertriage_rate` (predicted tier < true tier — the
+dangerous direction), and `overtriage_rate` (predicted tier > true tier —
+costly but safe) for every run, evaluated against the pool via the same
+Stratified K-Fold used for F1-macro. Per the cardiovascular-recall check
+already established above, we'd already committed to not treating F1-macro
+as the sole criterion — this generalizes that same principle across all
+categories via the tier mapping instead of singling out one category.
+
+**Model-selection result: ComplementNB (conservative TF-IDF) chosen over
+the F1-macro leader.** LinearSVC/rich had the top F1-macro (0.798), but its
+margin over LogisticRegression/rich (0.793) was smaller than either model's
+fold-to-fold standard deviation (~0.009–0.013) — statistically a tie, not a
+real difference. ComplementNB/conservative trailed on F1-macro (0.765, a
+real ~3-point gap) but had a substantially lower `undertriage_rate` (0.053
+vs. 0.089 for LinearSVC/rich — a ~40% relative reduction). Checked the
+mechanism before trusting the number: ComplementNB's cardiovascular recall
+(0.933) well exceeds its precision (0.774), and its general-pathological
+precision (0.783) well exceeds its recall (0.562) — a consistent, genuine
+directional tilt away from the "normal" tier when uncertain, not
+indiscriminate over-prediction (precision stays reasonable across the
+board). This is expected behavior for Complement Naive Bayes specifically:
+unlike standard Multinomial NB (which estimates each class's word
+probabilities from only that class's own data and is known to bias toward
+majority classes on imbalanced datasets — visible here in its collapsed
+digestive/nervous recall, 0.18–0.39), ComplementNB estimates each class's
+parameters from every *other* class's data, which structurally counteracts
+that imbalance bias — matching our moderately imbalanced dataset
+(~3.4x). **Trade-off accepted, not hidden:** ComplementNB's total
+tier-error rate is actually slightly higher than LinearSVC/rich's (19.8% vs.
+17.4%) — it doesn't reduce mistakes overall, it redistributes them toward
+the safe direction (`overtriage_rate` 0.145 vs. 0.085). For a hospital
+triage system, more false alarms are an acceptable operational cost in
+exchange for meaningfully fewer dangerous misses; this is a deliberate
+safety-for-accuracy trade, documented as exactly that rather than presented
+as a strictly better model.
+
 ## Train/validation/test split and data leakage
 
 **Decision:** a test set (~15–20%) is carved out once at the start, never

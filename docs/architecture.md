@@ -176,10 +176,18 @@ loaded by FastAPI, and exported to ONNX — one artifact, no train/serve mismatc
 
 | Experiment | Runs | What varies | Decision metric |
 |---|---|---|---|
-| `model-selection` | ~10 | 5 models × 2 TF-IDF configs | F1-macro, cardiovascular recall |
-| `feature-engineering` | ~36 | full TF-IDF grid, winning model fixed | F1-macro |
-| `hyperparameter-tuning` | ~10–30 | classifier hyperparams (`C`, penalty), via `GridSearchCV` + `mlflow.sklearn.autolog()` | F1-macro |
-| `latency-optimization` | ~3 | baseline vs. ONNX FP32 vs. ONNX INT8-quantized (or pruned, if RF wins) | P50/P95/P99 latency |
+| `model-selection` | 10 | 5 models × 2 TF-IDF configs | F1-macro + `undertriage_rate` (tier-aware, co-decisive — see `technical-decisions.md`) |
+| `feature-engineering` | ~36 | full TF-IDF grid, winning model fixed | F1-macro + `undertriage_rate` |
+| `hyperparameter-tuning` | ~10–30 | ComplementNB hyperparams (`alpha`, `norm`), via `GridSearchCV` | F1-macro + `undertriage_rate` |
+| `latency-optimization` | ~3 | baseline vs. ONNX FP32 vs. ONNX INT8-quantized | P50/P95/P99 latency |
+
+**Model-selection result: ComplementNB (conservative TF-IDF)** —
+F1-macro 0.765, `undertriage_rate` 0.053, chosen over the raw F1-macro
+leader (LinearSVC/rich, 0.798) for a substantially lower dangerous-miss
+rate at an accepted, documented accuracy cost. Full reasoning in
+`technical-decisions.md`. Downstream stages (feature-engineering,
+hyperparameter-tuning) fix ComplementNB as the model and search its
+surrounding config space instead of re-opening model choice.
 
 ### Latency optimization (Etapa 4) — branches by winning model type
 
