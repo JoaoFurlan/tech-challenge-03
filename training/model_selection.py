@@ -2,22 +2,20 @@
 
 5 candidate models x 2 TF-IDF configs (conservative/rich), evaluated via
 Stratified K-Fold on the training pool. Decision metric: F1-macro,
-cross-checked against cardiovascular-disease recall (a false negative there
-is this system's most dangerous failure mode — see
+co-decisive with undertriage_rate (a false negative on cardiovascular, or
+any cross-tier miss, is this system's most dangerous failure mode — see
 docs/technical-decisions.md). See docs/architecture.md for the full plan.
+
+Result: ComplementNB (conservative TF-IDF) chosen over the raw F1-macro
+leader for a substantially lower undertriage_rate — see
+docs/technical-decisions.md for the full reasoning. Downstream stages fix
+ComplementNB as the model.
 """
 
-import matplotlib
-
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
 import mlflow
-import numpy as np
-import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from sklearn.model_selection import StratifiedKFold
 from sklearn.naive_bayes import ComplementNB, MultinomialNB
 from sklearn.pipeline import Pipeline
@@ -25,23 +23,11 @@ from sklearn.svm import LinearSVC
 
 from training import mlflow_config
 from training.data import load_pool_and_test
-from training.urgency import tier_rank
+from training.evaluation import evaluate_and_log
+from training.urgency import CATEGORIES
 
 RANDOM_STATE = 42
 N_FOLDS = 5
-CATEGORIES = [
-    "cardiovascular diseases",
-    "digestive system diseases",
-    "general pathological conditions",
-    "neoplasms",
-    "nervous system diseases",
-]
-
-
-def category_slug(category: str) -> str:
-    """Short, consistent metric-name slug: first word of the category name."""
-    return category.split()[0]
-
 
 TFIDF_CONFIGS = {
     "conservative": {
@@ -75,23 +61,6 @@ def build_models() -> dict:
     }
 
 
-def plot_confusion_matrix(cm: np.ndarray, labels: list[str], title: str) -> plt.Figure:
-    fig, ax = plt.subplots(figsize=(6, 5))
-    ax.imshow(cm, cmap="Blues")
-    ax.set_xticks(range(len(labels)))
-    ax.set_yticks(range(len(labels)))
-    ax.set_xticklabels(labels, rotation=45, ha="right")
-    ax.set_yticklabels(labels)
-    for i in range(len(labels)):
-        for j in range(len(labels)):
-            ax.text(j, i, cm[i, j], ha="center", va="center")
-    ax.set_xlabel("Predicted")
-    ax.set_ylabel("True")
-    ax.set_title(title)
-    fig.tight_layout()
-    return fig
-
-
 def run() -> list[dict]:
     pool, _ = load_pool_and_test()
     X = pool["medical_abstract"].reset_index(drop=True)
@@ -112,73 +81,22 @@ def run() -> list[dict]:
                 mlflow.log_params({f"tfidf_{k}": v for k, v in tfidf_params.items()})
                 mlflow.log_params({"model": model_name, "tfidf_config": tfidf_name})
 
-                fold_f1_scores = []
-                y_pred_oof = pd.Series(index=y.index, dtype=object)
-
-                for train_idx, val_idx in cv.split(X, y):
-                    pipeline.fit(X.iloc[train_idx], y.iloc[train_idx])
-                    preds = pipeline.predict(X.iloc[val_idx])
-                    y_pred_oof.iloc[val_idx] = preds
-                    fold_f1_scores.append(
-                        f1_score(y.iloc[val_idx], preds, average="macro")
-                    )
-
-                f1_macro_mean = float(np.mean(fold_f1_scores))
-                f1_macro_std = float(np.std(fold_f1_scores))
-                accuracy = float((y_pred_oof == y).mean())
-
-                report = classification_report(y, y_pred_oof, output_dict=True)
-
-                per_class_metrics = {}
-                for category in CATEGORIES:
-                    slug = category_slug(category)
-                    per_class_metrics[f"recall_{slug}"] = report[category]["recall"]
-                    per_class_metrics[f"precision_{slug}"] = report[category]["precision"]
-
-                true_tier = y.map(tier_rank)
-                pred_tier = y_pred_oof.map(tier_rank)
-                tier_accuracy = float((true_tier == pred_tier).mean())
-                undertriage_rate = float((pred_tier < true_tier).mean())
-                overtriage_rate = float((pred_tier > true_tier).mean())
-
-                mlflow.log_metrics(
-                    {
-                        "f1_macro_mean": f1_macro_mean,
-                        "f1_macro_std": f1_macro_std,
-                        "accuracy": accuracy,
-                        "tier_accuracy": tier_accuracy,
-                        "undertriage_rate": undertriage_rate,
-                        "overtriage_rate": overtriage_rate,
-                        **per_class_metrics,
-                    }
+                metrics = evaluate_and_log(
+                    pipeline, X, y, cv, CATEGORIES, title=f"{model_name} / {tfidf_name}"
                 )
-                mlflow.log_text(
-                    classification_report(y, y_pred_oof), "classification_report.txt"
-                )
+                metrics["model"] = model_name
+                metrics["tfidf"] = tfidf_name
+                results.append(metrics)
 
-                cm = confusion_matrix(y, y_pred_oof, labels=CATEGORIES)
-                fig = plot_confusion_matrix(
-                    cm, CATEGORIES, title=f"{model_name} / {tfidf_name}"
+                recall_str = "  ".join(
+                    f"{k.removeprefix('recall_')}={v:.3f}"
+                    for k, v in metrics.items()
+                    if k.startswith("recall_")
                 )
-                mlflow.log_figure(fig, "confusion_matrix.png")
-                plt.close(fig)
-
-                recalls = {category_slug(c): report[c]["recall"] for c in CATEGORIES}
-                results.append(
-                    {
-                        "model": model_name,
-                        "tfidf": tfidf_name,
-                        "f1_macro_mean": f1_macro_mean,
-                        "f1_macro_std": f1_macro_std,
-                        "undertriage_rate": undertriage_rate,
-                        **{f"recall_{slug}": r for slug, r in recalls.items()},
-                    }
-                )
-                recall_str = "  ".join(f"{slug}={r:.3f}" for slug, r in recalls.items())
                 print(
                     f"{model_name:20s} {tfidf_name:12s} "
-                    f"f1_macro={f1_macro_mean:.4f}±{f1_macro_std:.4f}  "
-                    f"undertriage={undertriage_rate:.4f}  {recall_str}"
+                    f"f1_macro={metrics['f1_macro_mean']:.4f}±{metrics['f1_macro_std']:.4f}  "
+                    f"undertriage={metrics['undertriage_rate']:.4f}  {recall_str}"
                 )
 
     return results

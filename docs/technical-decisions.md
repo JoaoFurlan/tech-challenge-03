@@ -183,6 +183,47 @@ exchange for meaningfully fewer dangerous misses; this is a deliberate
 safety-for-accuracy trade, documented as exactly that rather than presented
 as a strictly better model.
 
+## Feature-engineering result: unigram-only, confirmed not just assumed
+
+**36-combination grid** (`ngram_range` x `max_features` x `min_df` x
+`sublinear_tf`) with ComplementNB fixed as the model surfaced the same
+F1-macro-vs-undertriage tension as model-selection, one level down: the
+F1-macro-best config (`ngram_range=(1,2)`, `max_features=20000`,
+`min_df=1`, `sublinear_tf=False`, F1=0.782) has `undertriage_rate=0.066`,
+meaningfully worse than the unigram-only region (`ngram_range=(1,1)`,
+undertriage clustered at 0.052-0.058 across the whole sub-grid — a
+consistent ~20% relative gap, not a cherry-picked pair). Bigrams improve
+the model's ability to positively identify "general pathological
+conditions" (recall climbs from ~0.54-0.59 to ~0.60-0.64), which is
+exactly the safety-favorable reluctance that made ComplementNB attractive
+in model-selection — bigrams erode it. Kept unigram-only
+(`ngram_range=(1,1)`) for the same safety-first reasoning already applied
+to the model choice.
+
+**Follow-up sweep** (`max_df` in {1.0, 0.7, 0.5} x `stop_words` in
+{"english", None}, anchored on `max_features=10000, min_df=2,
+sublinear_tf=False`): `max_df` had no measurable effect at any tested
+value (F1-macro and undertriage_rate both flat to within 0.0001/0) — no
+single unigram term is common enough across this corpus to matter once
+English stop words are already removed, so `max_df` isn't a useful lever
+here and wasn't added as a permanent config knob. `stop_words="english"`
+beat `stop_words=None` consistently across every `max_df` value tested,
+both on F1-macro and on undertriage_rate (0.052-0.053 vs. 0.055-0.055) —
+digestive and nervous recall (2 of the 3 "attention"-tier categories) both
+drop without stop-word removal, and that recall loss is what drives the
+extra undertriage. This confirms a choice we'd already made by default
+(`stop_words="english"` was fixed throughout model-selection) with actual
+evidence, rather than leaving it untested.
+
+**Final TF-IDF config**: `ngram_range=(1,1)`, `max_features=10000`,
+`min_df=2`, `sublinear_tf=False`, `stop_words="english"` — F1-macro 0.773,
+undertriage_rate 0.0525. Essentially unchanged from the original
+"conservative" config used in model-selection (F1=0.765,
+undertriage=0.0526); the grid search mostly *confirmed* that starting
+point was already close to the safety frontier, while explaining why
+(unigram-only is what matters, and the conservative config was already
+there).
+
 ## Train/validation/test split and data leakage
 
 **Decision:** a test set (~15–20%) is carved out once at the start, never

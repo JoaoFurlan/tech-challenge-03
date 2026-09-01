@@ -20,3 +20,6 @@ BASELINE_URGENCY = {
 
 def tier_rank(category: str) -> int:
     return TIER_ORDER.index(BASELINE_URGENCY[category])
+
+
+CATEGORIES = sorted(BASELINE_URGENCY)

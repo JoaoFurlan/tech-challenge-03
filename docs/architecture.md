@@ -177,7 +177,7 @@ loaded by FastAPI, and exported to ONNX — one artifact, no train/serve mismatc
 | Experiment | Runs | What varies | Decision metric |
 |---|---|---|---|
 | `model-selection` | 10 | 5 models × 2 TF-IDF configs | F1-macro + `undertriage_rate` (tier-aware, co-decisive — see `technical-decisions.md`) |
-| `feature-engineering` | ~36 | full TF-IDF grid, winning model fixed | F1-macro + `undertriage_rate` |
+| `feature-engineering` | 36 + 6 follow-up | full TF-IDF grid + max_df/stop_words follow-up, ComplementNB fixed | F1-macro + `undertriage_rate` |
 | `hyperparameter-tuning` | ~10–30 | ComplementNB hyperparams (`alpha`, `norm`), via `GridSearchCV` | F1-macro + `undertriage_rate` |
 | `latency-optimization` | ~3 | baseline vs. ONNX FP32 vs. ONNX INT8-quantized | P50/P95/P99 latency |
 
@@ -188,6 +188,14 @@ rate at an accepted, documented accuracy cost. Full reasoning in
 `technical-decisions.md`. Downstream stages (feature-engineering,
 hyperparameter-tuning) fix ComplementNB as the model and search its
 surrounding config space instead of re-opening model choice.
+
+**Feature-engineering result: `ngram_range=(1,1)`, `max_features=10000`,
+`min_df=2`, `sublinear_tf=False`, `stop_words="english"`** — F1-macro
+0.773, `undertriage_rate` 0.0525. Confirms the original "conservative"
+TF-IDF config was already close to the safety frontier; bigrams win on
+raw F1-macro but consistently worsen undertriage_rate, so unigram-only was
+kept. `max_df` tested with no measurable effect. Full reasoning in
+`technical-decisions.md`.
 
 ### Latency optimization (Etapa 4) — branches by winning model type
 
