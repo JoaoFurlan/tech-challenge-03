@@ -11,7 +11,14 @@ import os
 import requests
 import streamlit as st
 
-API_URL = os.environ.get("API_URL", "http://localhost:8000")
+# st.secrets is how Streamlit Community Cloud configures this (its own
+# TOML-based settings panel, not a plain OS env var); os.environ covers
+# local runs and docker-compose. Checked in that order since st.secrets
+# raises if no secrets.toml exists at all, rather than just being empty.
+try:
+    API_URL = st.secrets.get("API_URL", os.environ.get("API_URL", "http://localhost:8000"))
+except FileNotFoundError:
+    API_URL = os.environ.get("API_URL", "http://localhost:8000")
 
 URGENCY_DISPLAY = {
     "urgent": ("🔴", "URGENT"),
