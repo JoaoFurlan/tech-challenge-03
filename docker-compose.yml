@@ -4,6 +4,9 @@
 # deployment as a second target (see monitoring/prometheus.yml), so the
 # Grafana dashboard shows real production traffic alongside local dev
 # traffic. See docs/architecture.md / docs/technical-decisions.md.
+#
+# A push touching this file auto-redeploys the EC2-hosted instance of this
+# stack via SSM Run Command -- see .github/workflows/deploy-monitoring.yml.
 
 services:
   api:
