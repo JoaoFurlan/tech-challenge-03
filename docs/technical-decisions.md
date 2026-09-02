@@ -527,11 +527,26 @@ before any evidence existed. Four examples, and what they revealed:
    vectorizer's vocabulary (exported once, as plain JSON, from the
    already-fitted `models/pipeline.joblib` — reading a fitted model's
    learned vocabulary isn't training, so this touches nothing that would
-   risk test-set leakage). When no overlap exists, urgency is floored at
-   `attention` rather than trusting a possibly-spurious `normal`, and the
-   response honestly signals the category wasn't a real determination
-   instead of presenting it with false confidence. Verified: "stomachache"
-   now returns `low_confidence: true`.
+   risk test-set leakage). Verified: "stomachache" now returns
+   `low_confidence: true`.
+
+   **Revised after initial deployment**: first version *floored* urgency
+   at `attention` (raised a low guess up, left a high one unchanged) —
+   for "stomachache," the raw category (`cardiovascular`) already implied
+   `urgent`, so the floor was a no-op and the UI displayed `URGENT` right
+   next to a warning about low confidence, which read as contradictory
+   even though each part was individually correct. Caught via user
+   testing of the deployed fix. The real issue was the floor's premise: a
+   raw `urgent` guess isn't actually safer or more justified than
+   `normal` when there's zero real evidence — it's equally ungrounded, in
+   the other direction. Changed to a **fixed override**: `low_confidence`
+   now always forces `urgency = "attention"` outright, discarding the raw
+   guess entirely rather than taking its max against a floor — a
+   deliberate "flag for human review" signal, not a hedge in either
+   direction. Also added a `message` field (populated only when
+   `low_confidence`) giving the caller concrete guidance to resubmit with
+   more clinical detail — surfaced in the Streamlit UI's warning too, not
+   just the API response.
 
 **One is a genuine limitation, not fixable by either change — documented,
 not silently accepted.** The cardiac-arrest example (`normal`,

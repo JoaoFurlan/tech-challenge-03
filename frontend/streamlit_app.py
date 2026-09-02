@@ -64,14 +64,16 @@ if st.button("Classify", type="primary", disabled=not text.strip()):
             st.markdown(f"### {icon} Urgency: **{label}**")
             st.markdown(f"**Predicted category:** {result['category']}")
             if result.get("low_confidence"):
-                st.warning(
+                message = (
                     "⚠️ Low confidence: this text shares no vocabulary with the "
-                    "training data, so the category and urgency above are "
-                    "driven by the model's default bias, not real evidence. As "
-                    "a safety measure, low-confidence results are never shown "
-                    "as NORMAL — ATTENTION is the minimum, not necessarily "
-                    "what's displayed above."
+                    "training data, so the category above isn't backed by real "
+                    "evidence. Urgency is fixed to ATTENTION rather than "
+                    "trusting an ungrounded URGENT or NORMAL guess in either "
+                    "direction."
                 )
+                if result.get("message"):
+                    message += f"\n\n**{result['message']}**"
+                st.warning(message)
 
 st.divider()
 st.caption(f"API: `{API_URL}`")

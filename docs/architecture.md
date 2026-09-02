@@ -76,8 +76,10 @@ domain-shift limitation.
 
 **Low-confidence signal**: `/predict` also returns `low_confidence: bool`
 — true when the input shares no vocabulary at all with the training data,
-in which case urgency is floored at `attention` rather than trusting a
-possibly-spurious `normal`. Same section for the full story.
+in which case urgency is fixed to `attention` (not floored — a raw
+`urgent` guess is just as ungrounded as `normal` when there's no real
+evidence, so neither is trusted) and a `message` field guides the caller
+toward providing more detail. Same section for the full story.
 
 ## Repo structure
 

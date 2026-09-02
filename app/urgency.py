@@ -54,9 +54,3 @@ def predict_urgency(category: str, text: str) -> str:
     net = keyword_adjustment(text)
     tier = min(max(baseline_tier + net, 0), len(TIER_ORDER) - 1)
     return TIER_ORDER[tier]
-
-
-def floor_urgency(urgency: str, minimum: str) -> str:
-    """Raise urgency to at least `minimum`, never lower it."""
-    tier = max(TIER_ORDER.index(urgency), TIER_ORDER.index(minimum))
-    return TIER_ORDER[tier]

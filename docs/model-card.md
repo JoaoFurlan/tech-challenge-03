@@ -204,9 +204,12 @@ optimization for why, and § Model Details above.
 - **Low-confidence inputs are now flagged, not silently trusted.** As of
   the fix above, `/predict` returns `low_confidence: true` when the input
   shares no vocabulary with the training data at all (e.g. very short or
-  colloquial text) — the category is then driven by the classifier's
-  structural bias rather than real evidence, and urgency is floored at
-  `attention` rather than risking a spurious `normal`. This narrows one
+  colloquial text) — the category prediction is then driven by the
+  classifier's structural bias, not real evidence. Urgency is **fixed to
+  `attention`** in that case (not merely floored) — a raw `urgent` guess
+  is exactly as ungrounded as `normal` when there's no real evidence
+  behind it, so neither extreme is trusted; a `message` field is also
+  returned, guiding the caller to provide more detail. This narrows one
   failure mode (zero-signal inputs) but does not address the broader
   register-mismatch risk above (in-vocabulary text in an unfamiliar
   register still gets a confident-looking, potentially wrong answer).
