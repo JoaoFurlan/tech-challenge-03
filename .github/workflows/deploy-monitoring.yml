@@ -37,9 +37,11 @@ jobs:
           role-skip-session-tagging: true
 
       # AWS-RunShellScript runs as root, not ssm-user (unlike an interactive
-      # Session Manager shell) -- so this needs its own `safe.directory`
-      # exemption (git refuses to operate in a repo it doesn't own) and
-      # can't rely on the ssm-user's PATH having uv on it already.
+      # Session Manager shell), with a near-empty environment -- $HOME isn't
+      # even set, which git's `--global` config needs (fatal: $HOME not set,
+      # hit for real on the first live run). So this needs its own $HOME,
+      # `safe.directory` exemption (git refuses to operate in a repo it
+      # doesn't own), and can't rely on the ssm-user's PATH having uv on it.
       - name: Redeploy monitoring stack via SSM
         run: |
           COMMAND_ID=$(aws ssm send-command \
@@ -47,6 +49,7 @@ jobs:
             --document-name "AWS-RunShellScript" \
             --parameters '{"commands":[
               "set -e",
+              "export HOME=/root",
               "git config --global --add safe.directory /home/ssm-user/tech-challenge-03-v1",
               "cd /home/ssm-user/tech-challenge-03-v1",
               "git pull",
