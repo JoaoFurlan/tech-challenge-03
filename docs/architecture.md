@@ -55,9 +55,8 @@ in two steps:
 | General pathological conditions | normal |
 
 **2. Per-abstract keyword adjustment** (case-insensitive regex over the abstract
-text; net score = escalate hits − de-escalate hits; positive nudges the tier up
-one step, negative nudges it down one step, capped at urgent / floored at
-normal):
+text; net score = escalate hits − de-escalate hits; `tier = clamp(baseline +
+net, normal, urgent)`):
 
 - Escalate (+1): `acute`, `emergency`, `severe`, `critical`, `sudden`,
   `life-threatening`
@@ -66,6 +65,19 @@ normal):
 
 Word lists are a starting proposal — to be sanity-checked against real abstract
 text once the pipeline is running, not assumed correct in advance.
+
+**Revised post-deployment**: originally capped the nudge at exactly one
+tier regardless of `net`'s magnitude; real-world testing found this
+under-reacted to genuinely severe multi-keyword cases (an anaphylaxis
+description with 2 escalate hits only reached `attention`, not `urgent`).
+Now scales with `net` directly, clamped to the valid tier range — see
+`technical-decisions.md` § Real-world testing surfaced a genuine
+domain-shift limitation.
+
+**Low-confidence signal**: `/predict` also returns `low_confidence: bool`
+— true when the input shares no vocabulary at all with the training data,
+in which case urgency is floored at `attention` rather than trusting a
+possibly-spurious `normal`. Same section for the full story.
 
 ## Repo structure
 

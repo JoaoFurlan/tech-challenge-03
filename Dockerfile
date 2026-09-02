@@ -6,10 +6,11 @@
 # no business in the served image; the app serves the exported ONNX
 # model, not the sklearn pipeline. See pyproject.toml.
 #
-# models/pipeline_fp32.onnx is DVC-tracked (S3), not committed to git --
-# it must already be present in the build context (`dvc pull` before
-# `docker build`, see docs/architecture.md § CI/CD) since it isn't fetched
-# inside this Dockerfile.
+# models/pipeline_fp32.onnx and models/vocabulary.json are DVC-tracked
+# (S3), not committed to git -- both must already be present in the build
+# context (`dvc pull` before `docker build`, see docs/architecture.md §
+# CI/CD) since neither is fetched inside this Dockerfile. vocabulary.json
+# backs the low-confidence guard (app/model.py) -- see technical-decisions.md.
 
 FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
 
@@ -40,6 +41,7 @@ WORKDIR /app
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/app ./app
 COPY models/pipeline_fp32.onnx ./models/pipeline_fp32.onnx
+COPY models/vocabulary.json ./models/vocabulary.json
 
 ENV PATH="/app/.venv/bin:${PATH}"
 

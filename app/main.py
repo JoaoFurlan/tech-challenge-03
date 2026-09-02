@@ -15,8 +15,8 @@ from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_
 from pydantic import BaseModel, Field
 
 from app import model as model_module
-from app.model import predict_category
-from app.urgency import predict_urgency
+from app.model import has_known_vocabulary, predict_category
+from app.urgency import floor_urgency, predict_urgency
 
 REQUEST_COUNT = Counter("predict_requests_total", "Total /predict requests", ["status"])
 REQUEST_LATENCY = Histogram("predict_latency_seconds", "Latency of /predict requests")
@@ -38,6 +38,15 @@ class PredictRequest(BaseModel):
 class PredictResponse(BaseModel):
     category: str
     urgency: str
+    low_confidence: bool = Field(
+        description=(
+            "True when the input shares no vocabulary with the training "
+            "data (e.g. very short or colloquial text) -- the category is "
+            "then driven by the classifier's structural bias rather than "
+            "real evidence; urgency is floored at 'attention' rather than "
+            "trusting a possibly-spurious 'normal'. See technical-decisions.md."
+        )
+    )
 
 
 @app.post("/predict", response_model=PredictResponse)
@@ -46,12 +55,15 @@ def predict(request: PredictRequest) -> PredictResponse:
     try:
         category = predict_category(request.text)
         urgency = predict_urgency(category, request.text)
+        low_confidence = not has_known_vocabulary(request.text)
+        if low_confidence:
+            urgency = floor_urgency(urgency, "attention")
     except Exception:
         REQUEST_COUNT.labels(status="error").inc()
         raise
     else:
         REQUEST_COUNT.labels(status="success").inc()
-        return PredictResponse(category=category, urgency=urgency)
+        return PredictResponse(category=category, urgency=urgency, low_confidence=low_confidence)
     finally:
         REQUEST_LATENCY.observe(time.perf_counter() - start)
 

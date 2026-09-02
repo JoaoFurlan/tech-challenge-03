@@ -11,6 +11,7 @@ The saved artifact (models/pipeline.joblib) is what the FastAPI app loads
 and what optimization/export_and_benchmark.py exports to ONNX.
 """
 
+import json
 from pathlib import Path
 
 import mlflow
@@ -29,6 +30,7 @@ from training.urgency import CATEGORIES, tier_rank
 
 MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 MODEL_PATH = MODELS_DIR / "pipeline.joblib"
+VOCABULARY_PATH = MODELS_DIR / "vocabulary.json"
 
 TFIDF_PARAMS = {
     "ngram_range": (1, 1),
@@ -102,6 +104,14 @@ def run() -> dict:
 
     MODELS_DIR.mkdir(exist_ok=True)
     dump(pipeline, MODEL_PATH)
+
+    # app/model.py's low-confidence guard needs the vectorizer's vocabulary
+    # to detect near-empty TF-IDF feature vectors (e.g. "stomachache" --
+    # not a substring match of "stomach", genuinely absent from training
+    # vocabulary) -- see docs/technical-decisions.md. Exported as plain
+    # JSON so the served app doesn't need scikit-learn/joblib at runtime.
+    vocabulary = sorted(pipeline.named_steps["tfidf"].vocabulary_.keys())
+    VOCABULARY_PATH.write_text(json.dumps(vocabulary))
 
     recall_str = "  ".join(
         f"{k.removeprefix('recall_')}={v:.3f}"

@@ -42,15 +42,21 @@ def keyword_adjustment(text: str) -> int:
 
 
 def predict_urgency(category: str, text: str) -> str:
-    """Category baseline, nudged one tier by keyword adjustment (capped)."""
+    """Category baseline, nudged by the net keyword score (clamped to range).
+
+    Scales with the net score rather than capping at one step regardless of
+    magnitude (the original design) -- found via real-world testing to
+    under-react to multi-keyword cases, e.g. "acute ... severe ..." in a
+    genuinely life-threatening description only moved normal->attention,
+    not further. See docs/technical-decisions.md.
+    """
     baseline_tier = TIER_ORDER.index(BASELINE_URGENCY[category])
     net = keyword_adjustment(text)
+    tier = min(max(baseline_tier + net, 0), len(TIER_ORDER) - 1)
+    return TIER_ORDER[tier]
 
-    if net > 0:
-        tier = min(baseline_tier + 1, len(TIER_ORDER) - 1)
-    elif net < 0:
-        tier = max(baseline_tier - 1, 0)
-    else:
-        tier = baseline_tier
 
+def floor_urgency(urgency: str, minimum: str) -> str:
+    """Raise urgency to at least `minimum`, never lower it."""
+    tier = max(TIER_ORDER.index(urgency), TIER_ORDER.index(minimum))
     return TIER_ORDER[tier]

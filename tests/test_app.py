@@ -17,6 +17,7 @@ def client(monkeypatch):
     monkeypatch.setattr(
         main_module, "predict_category", lambda text: "cardiovascular diseases"
     )
+    monkeypatch.setattr(main_module, "has_known_vocabulary", lambda text: True)
     with TestClient(main_module.app) as test_client:
         yield test_client
 
@@ -27,6 +28,22 @@ def test_predict_returns_category_and_urgency(client):
     body = response.json()
     assert body["category"] == "cardiovascular diseases"
     assert body["urgency"] == "attention"  # "routine" de-escalates urgent -> attention
+    assert body["low_confidence"] is False
+
+
+def test_predict_floors_urgency_when_low_confidence(client, monkeypatch):
+    # Baseline "normal" with no keyword hits would normally stay "normal",
+    # but with no real vocabulary signal the result shouldn't look more
+    # benign than "attention" -- see docs/technical-decisions.md.
+    monkeypatch.setattr(
+        main_module, "predict_category", lambda text: "general pathological conditions"
+    )
+    monkeypatch.setattr(main_module, "has_known_vocabulary", lambda text: False)
+    response = client.post("/predict", json={"text": "gibberish input"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["urgency"] == "attention"
+    assert body["low_confidence"] is True
 
 
 def test_predict_rejects_empty_text(client):

@@ -496,6 +496,60 @@ as a plain, minimally-scoped dependency list just for this one deployment
 target — a small, contained bit of duplication versus a second AWS
 environment's worth of ops overhead.
 
+## Real-world testing surfaced a genuine domain-shift limitation
+
+After deployment, manual testing against realistic (not abstract-style)
+triage phrasing surfaced concrete misclassifications, confirming a risk
+`model-card.md` had already flagged theoretically ("Domain shift risk")
+before any evidence existed. Four examples, and what they revealed:
+
+| Input | Predicted (before fix) | Root cause |
+|---|---|---|
+| "Unresponsive, no detectable pulse, non-breathing." | `normal` | Words *are* in vocabulary (`unresponsive`, `pulse`, `breathing`), but the model never learned to associate this register with urgency — trained only on formal PubMed-style abstracts, never on clinical shorthand. |
+| "stomachache" | `cardiovascular` / `urgent` | Genuinely **zero** TF-IDF features — `stomachache` never appears in the training vocabulary at all (only `stomach` does; TF-IDF doesn't do subword matching). With no real evidence, the prediction is driven entirely by ComplementNB's structural class bias (the same safety-tilt that won model-selection) applied to an empty vector, not a real judgment. |
+| "Acute respiratory distress, ... severe facial/airway swelling, blood pressure 80/50 mmHg following a bee sting." | `attention` (anaphylaxis, should be `urgent`) | Keyword-adjustment design bug: capped at exactly one tier regardless of how many escalate words matched. 2 hits (`acute`, `severe`) only moved normal→attention, not further. |
+| "Asymptomatic patient requesting a routine prescription renewal for hypertension medication; mild ... rash ..." | `attention` (should be closer to `normal`) | Category-level miss (`cardiovascular`, likely from "hypertension" dominating the TF-IDF signal despite being mentioned as routine background, not the active complaint) compounded by the same one-tier cap masking the 2 de-escalate hits (`routine`, `mild`) that should have corrected further. |
+
+**Two of these are genuine, code-only bugs — fixed, not just documented:**
+
+1. **Keyword-adjustment now scales with the net score instead of capping at
+   one tier** (`app/urgency.py`): `tier = clamp(baseline + net, 0, 2)`
+   instead of `tier = baseline ± 1`. Verified against the real cases:
+   anaphylaxis now reaches `urgent` (was `attention`); the routine-renewal
+   case now reaches `normal` (was `attention`) — the de-escalate signal was
+   strong enough to fully correct what would otherwise have been a
+   dangerous over-triage from the flawed category prediction. No
+   retraining involved — pure inference-time logic change.
+
+2. **A low-confidence guard now flags near-empty-signal inputs**
+   (`app/model.py::has_known_vocabulary`, wired into `/predict`'s response
+   as `low_confidence: bool`). Checks token overlap against the
+   vectorizer's vocabulary (exported once, as plain JSON, from the
+   already-fitted `models/pipeline.joblib` — reading a fitted model's
+   learned vocabulary isn't training, so this touches nothing that would
+   risk test-set leakage). When no overlap exists, urgency is floored at
+   `attention` rather than trusting a possibly-spurious `normal`, and the
+   response honestly signals the category wasn't a real determination
+   instead of presenting it with false confidence. Verified: "stomachache"
+   now returns `low_confidence: true`.
+
+**One is a genuine limitation, not fixable by either change — documented,
+not silently accepted.** The cardiac-arrest example (`normal`,
+`low_confidence: false`) fails because its vocabulary genuinely does
+overlap with training data, just not in a way the model learned to
+associate with urgency — a real register mismatch between the *Medical
+Abstracts TC Corpus* (formal, third-person, academic case-report writing)
+and how urgency is actually communicated in short clinical/triage
+phrasing. **More training data of the same kind would not fix this** —
+the corpus is the only data source available, and more abstracts would
+only make the model marginally better at abstracts, not teach it a
+register it was never shown. A real fix would need training examples in
+that different register — real (or realistically synthesized) triage-note
+phrasing, not more academic abstracts — which is a genuine scope increase
+beyond what this project's timeline supports, not a quick follow-up. See
+`model-card.md` § Caveats for how this is now recorded as a validated,
+evidenced limitation rather than a theoretical one.
+
 ## Out of scope (deliberately)
 
 Kubernetes/HPA/KEDA, Canary/Shadow deployment, implemented drift detection

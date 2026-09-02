@@ -1,0 +1,5 @@
+outs:
+- md5: 63ef2d17bcb66fa4414070f1601c96fd
+  size: 120482
+  hash: md5
+  path: vocabulary.json

@@ -79,7 +79,7 @@ jobs:
       - name: Pull model artifact from DVC
         run: |
           uv sync --locked --group training --no-dev
-          uv run dvc pull models/pipeline_fp32.onnx
+          uv run dvc pull models/pipeline_fp32.onnx models/vocabulary.json
 
       - name: Log in to ECR
         id: ecr-login

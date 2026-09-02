@@ -6,7 +6,7 @@ from app.urgency import (
 from app.urgency import (
     TIER_ORDER as APP_TIER_ORDER,
 )
-from app.urgency import keyword_adjustment, predict_urgency
+from app.urgency import floor_urgency, keyword_adjustment, predict_urgency
 from training.urgency import BASELINE_URGENCY as TRAINING_BASELINE_URGENCY
 from training.urgency import TIER_ORDER as TRAINING_TIER_ORDER
 
@@ -56,3 +56,20 @@ def test_keyword_matching_is_case_insensitive():
 
 def test_keyword_matching_respects_word_boundaries():
     assert keyword_adjustment("an inaccurate measurement") == 0
+
+
+def test_multiple_escalate_hits_move_more_than_one_tier():
+    # Regression test: previously capped at exactly one tier regardless of
+    # how many escalate words matched, under-reacting to genuinely severe
+    # multi-keyword cases (found via real-world testing on an anaphylaxis
+    # description that only reached "attention", not "urgent" -- see
+    # docs/technical-decisions.md).
+    text = "acute presentation with severe symptoms"
+    assert keyword_adjustment(text) == 2
+    assert predict_urgency("general pathological conditions", text) == "urgent"
+
+
+def test_floor_urgency_raises_but_never_lowers():
+    assert floor_urgency("normal", "attention") == "attention"
+    assert floor_urgency("urgent", "attention") == "urgent"
+    assert floor_urgency("attention", "attention") == "attention"

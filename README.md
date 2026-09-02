@@ -87,6 +87,20 @@ tuning, not just model choice.
 | Undertriage rate (dangerous misses) | 0.0498 |
 | Overtriage rate (false alarms) | 0.1446 |
 
+**Known limitation, confirmed via real-world testing, not just assumed**:
+the model is trained on formal medical *abstracts* (academic, third-person
+register), not real triage phrasing. Testing realistic short/informal
+inputs post-deployment found genuine misses — e.g. "Unresponsive, no
+detectable pulse, non-breathing" classified as `normal`. Two related bugs
+this surfaced were fixed (the keyword-adjustment layer now scales with
+signal strength instead of capping at one tier, and `/predict` now flags
+`low_confidence: true` for inputs with no real vocabulary overlap), but the
+core register mismatch isn't fixable by adding more of the same training
+data — it would need real triage-style text, a genuine scope increase. Full
+writeup in `docs/technical-decisions.md` and `docs/model-card.md` §
+Caveats. This is exactly the kind of limitation `docs/model-card.md`
+already exists to document plainly rather than hide.
+
 ## Latency optimization
 
 Exported to ONNX (`skl2onnx`) and compared against dynamic INT8

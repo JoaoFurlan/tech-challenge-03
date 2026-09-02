@@ -10,11 +10,15 @@ sections are placeholders until the training pipeline runs; see
 ## Model Details
 
 - **Developed by:** solo project, Tech Challenge Fase 3 (POS Tech / MLET).
-- **Model date:** TBD (filled in once training completes).
-- **Model type:** text classifier — TF-IDF vectorizer + a linear or tree-based
-  scikit-learn classifier (final algorithm chosen empirically via the
-  `model-selection` MLflow experiment; candidates: Logistic Regression,
-  LinearSVC, Multinomial Naive Bayes, Complement Naive Bayes, Random Forest).
+- **Model date:** 2026-09.
+- **Model type:** text classifier — TF-IDF vectorizer (unigram,
+  `max_features=10000`, `min_df=2`, `stop_words="english"`) + **Complement
+  Naive Bayes** (`alpha=0.5, norm=True`), chosen via the `model-selection`
+  MLflow experiment over Logistic Regression, LinearSVC, Multinomial NB,
+  and Random Forest — *not* the raw F1-macro leader (LinearSVC), chosen
+  instead for a substantially lower dangerous-miss rate, an explicit
+  documented safety-for-accuracy trade. Full reasoning in
+  `technical-decisions.md`.
 - **What it predicts directly:** one of 5 disease categories (neoplasms,
   cardiovascular diseases, nervous system diseases, digestive diseases,
   general pathological conditions) from a medical report's free text.
@@ -22,10 +26,17 @@ sections are placeholders until the training pipeline runs; see
   normal / attention / urgent — derived deterministically from the predicted
   category plus a keyword adjustment over the report text (see
   `architecture.md` § Urgency mapping). The urgency tier is **not** learned;
-  only the category prediction is a machine-learned output.
-- **Optimization:** exported to ONNX, with quantization (linear model) or
-  cost-complexity pruning (tree model) applied as a latency-optimization step
-  — see `technical-decisions.md` § Latency optimization.
+  only the category prediction is a machine-learned output. As of the
+  domain-shift fixes below, the response also includes `low_confidence:
+  bool`, signaling when the category prediction has no real vocabulary
+  evidence behind it.
+- **Optimization:** exported to ONNX (FP32) — chosen over the sklearn
+  pipeline for a 4.4x P50 latency win at zero accuracy cost. INT8
+  quantization was tested and rejected: counterintuitively *slower* than
+  FP32 at this model's scale (dequantization overhead exceeds the compute
+  savings for a model this small) — a documented negative finding, not
+  assumed to help because the plan called for it. See
+  `technical-decisions.md` § Latency optimization.
 - **License / paper:** none published for this project; underlying dataset is
   the Medical Abstracts TC Corpus (Kaggle /
   `sebischair/Medical-Abstracts-TC-Corpus`).
@@ -100,18 +111,51 @@ above, drawn from the same Medical Abstracts TC Corpus via a single
 stratified split. No separate out-of-distribution evaluation set is used;
 this is a known limitation (see § Caveats).
 
-## Quantitative Analyses — TBD
+## Quantitative Analyses
 
-To be filled in after `training/model_selection.py`,
-`training/feature_engineering.py`, `training/hyperparameter_tuning.py`, and
-`training/train_final.py` run:
+Final pipeline (ComplementNB `alpha=0.5, norm=True` + TF-IDF as above),
+evaluated once on the 1,245-document held-out test set — see
+`architecture.md` and `technical-decisions.md` for the full staged-experiment
+process (model-selection → feature-engineering → hyperparameter-tuning) that
+led here, including every rejected alternative and why.
 
-- [ ] Winning model + configuration
-- [ ] Final F1-macro on the held-out test set
-- [ ] Per-class precision/recall/F1 on the held-out test set
-- [ ] Confusion matrix (test set)
-- [ ] Cardiovascular-class recall (test set)
-- [ ] Original vs. optimized (ONNX) latency — P50/P95/P99, and model size
+| Metric | Value |
+|---|---|
+| F1-macro | 0.7786 |
+| Accuracy | 0.7880 |
+| Tier accuracy (urgency, not just category) | 0.8056 |
+| Undertriage rate (predicted tier below true tier — dangerous) | 0.0498 |
+| Overtriage rate (predicted tier above true tier — costly, not dangerous) | 0.1446 |
+
+Per-class (test set):
+
+| Category | Recall | Precision |
+|---|---|---|
+| Cardiovascular diseases | 0.939 | 0.758 |
+| Neoplasms | 0.927 | 0.831 |
+| Digestive system diseases | 0.781 | 0.788 |
+| Nervous system diseases | 0.709 | 0.747 |
+| General pathological conditions | 0.574 | 0.792 |
+
+Cardiovascular recall (0.939) was the explicit clinically-motivated check
+from § Metrics — confirmed high, consistent with the safety-first model
+choice. General pathological conditions has the lowest recall (0.574) but
+the highest precision among the weaker classes (0.792) — consistent with
+ComplementNB's documented tilt away from confidently predicting the
+"normal"-mapped category unless the evidence is strong, the same mechanism
+that drove the model-selection choice.
+
+**Latency** (ONNX FP32 vs. sklearn baseline, single-document `/predict`,
+500-request benchmark):
+
+| Variant | P50 | P95 | P99 | Size |
+|---|---|---|---|---|
+| sklearn baseline | 0.595ms | 0.814ms | 1.040ms | 1,233KB |
+| ONNX FP32 (served) | 0.135ms | 0.263ms | 0.339ms | 413KB |
+| ONNX INT8 (tested, not served) | 0.163ms | 0.281ms | 0.397ms | 267KB |
+
+INT8 was slower than FP32, not faster — see `technical-decisions.md` § Latency
+optimization for why, and § Model Details above.
 
 ## Ethical Considerations
 
@@ -137,11 +181,35 @@ To be filled in after `training/model_selection.py`,
 
 ## Caveats and Recommendations
 
-- **Domain shift risk:** medical abstracts (condensed, third-person, academic
-  register) likely read differently than a real hospital laudo (often
-  first-person clinical notes, abbreviations, structured fields). A model
-  performing well on this dataset should not be assumed to generalize to real
-  hospital intake text without further validation on in-domain data.
+- **Domain shift risk — confirmed via real-world testing, not just
+  theoretical.** Medical abstracts (condensed, third-person, academic
+  register) read differently than real triage phrasing (short, informal,
+  clinical-shorthand). Post-deployment manual testing confirmed this
+  concretely: "Unresponsive, no detectable pulse, non-breathing" — a
+  textbook cardiac-arrest description — was classified `normal`. The
+  words are individually in the training vocabulary, but the model never
+  learned to associate this *register* with urgency, because it was never
+  shown text written that way. **This is not fixable by adding more of
+  the existing training data** — the Medical Abstracts TC Corpus is the
+  only data source available, and more abstracts would only improve
+  performance on abstract-style text, not teach the model a register it's
+  never seen. A real fix needs training examples in that different
+  register (real or realistically synthesized triage notes), which is a
+  genuine scope increase, not a quick follow-up. Full investigation,
+  including three other concrete misclassification examples and the two
+  bugs it did surface and get fixed (a keyword-adjustment cap, and a
+  missing low-confidence signal for near-empty-vocabulary inputs), in
+  `technical-decisions.md` § Real-world testing surfaced a genuine
+  domain-shift limitation.
+- **Low-confidence inputs are now flagged, not silently trusted.** As of
+  the fix above, `/predict` returns `low_confidence: true` when the input
+  shares no vocabulary with the training data at all (e.g. very short or
+  colloquial text) — the category is then driven by the classifier's
+  structural bias rather than real evidence, and urgency is floored at
+  `attention` rather than risking a spurious `normal`. This narrows one
+  failure mode (zero-signal inputs) but does not address the broader
+  register-mismatch risk above (in-vocabulary text in an unfamiliar
+  register still gets a confident-looking, potentially wrong answer).
 - **No drift monitoring implemented.** In a real deployment, input
   distribution drift and concept drift (see `course-notes/monitoring-
   services.md`) would need active monitoring; this project's monitoring
