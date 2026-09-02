@@ -85,7 +85,8 @@ toward providing more detail. Same section for the full story.
 
 ```
 tech-challenge-03-v1/
-├── .github/workflows/ci.yml       # lint -> test -> build -> push to ECR (OIDC)
+├── .github/workflows/ci-cd.yml    # lint -> test -> build -> push to ECR (OIDC)
+├── .github/workflows/deploy-monitoring.yml  # SSM redeploy of EC2 monitoring stack
 ├── app/                            # FastAPI service
 │   ├── main.py                     # /predict, /metrics endpoints
 │   ├── model.py                    # load pipeline artifact, predict category
