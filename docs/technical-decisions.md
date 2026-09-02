@@ -471,6 +471,33 @@ triggered manually (there's no real stream of new data feeding this project),
 demonstrating orchestration capability rather than an actual recurring
 retraining need in this specific context.
 
+## Monitoring stack: dual scrape targets, and a real query bug caught
+
+**Decision:** Prometheus (`monitoring/prometheus.yml`) scrapes two targets,
+both labeled with an `environment` label for the Grafana dashboard to
+break down by: the local `docker-compose` `api` service, and the live AWS
+deployment (`medsys.us-east-1.elasticbeanstalk.com`). The literal
+requirement only needs the local, self-contained stack (api + prometheus +
+grafana all as compose services) — the second target is a deliberate
+extra, since it costs nothing (Prometheus scraping one more HTTP endpoint)
+and makes the demo materially stronger: real production traffic (including
+all our own manual testing throughout this project) shown alongside
+synthetic local traffic in the same panels, not just local test calls.
+
+**Bug found via actual browser verification, not just "Grafana accepted
+the dashboard JSON":** the Error Rate panel's query
+(`sum(rate(...{status="error"}...)) / sum(rate(...))`) showed **"No
+data"** rather than an explicit 0% when there had genuinely been zero
+errors — technically correct PromQL behavior (a ratio's numerator has no
+series to divide when no `status="error"` samples exist at all yet), but
+visually indistinguishable from the panel being broken. Fixed with a
+`... or on(environment) sum(...) * 0` fallback, guaranteeing a
+zero-valued series per environment even with no error samples. Same
+verification discipline as everywhere else in this project: dashboard
+JSON validating and Grafana provisioning it without error doesn't mean
+the panels actually render real data — confirmed via an actual browser
+session with real generated traffic, which is exactly what surfaced this.
+
 ## Streamlit frontend (extra, not graded)
 
 Separate, simple application calling the API's `/predict` endpoint over HTTP

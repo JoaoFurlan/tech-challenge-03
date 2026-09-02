@@ -1,0 +1,45 @@
+# Monitoring stack: api + prometheus + grafana. Satisfies the challenge's
+# "API + Prometheus + Grafana via Docker Compose" requirement as a
+# self-contained local stack -- Prometheus also scrapes the live AWS
+# deployment as a second target (see monitoring/prometheus.yml), so the
+# Grafana dashboard shows real production traffic alongside local dev
+# traffic. See docs/architecture.md / docs/technical-decisions.md.
+
+services:
+  api:
+    build: .
+    ports:
+      - "8000:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  prometheus:
+    image: prom/prometheus:v2.53.0
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    depends_on:
+      - prometheus

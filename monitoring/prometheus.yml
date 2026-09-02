@@ -1,0 +1,23 @@
+# Two scrape targets: the local docker-compose api service (self-contained
+# demo, matches the literal "API + Prometheus + Grafana via Docker Compose"
+# requirement) and the live AWS-hosted API (real production traffic,
+# including everything used to debug/verify it throughout this project) --
+# see docs/technical-decisions.md.
+
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "medsys-api-local"
+    static_configs:
+      - targets: ["api:8000"]
+        labels:
+          environment: "local"
+
+  - job_name: "medsys-api-aws"
+    scheme: http
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["medsys.us-east-1.elasticbeanstalk.com:80"]
+        labels:
+          environment: "aws"

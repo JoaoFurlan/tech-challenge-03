@@ -121,3 +121,16 @@ so quantization's per-call dequantization overhead outweighs its compute
 savings. It does deliver a real size win (35% smaller than FP32) if
 footprint matters more than latency. Full reasoning in
 `docs/technical-decisions.md`.
+
+## Monitoring
+
+`docker compose up --build` — api + prometheus + grafana, dashboard
+auto-provisioned (not clicked together manually) with the 3 required
+panels: request rate, latency (P50/P95/P99), error rate. Prometheus scrapes
+both the local `api` service and the live AWS deployment, so the dashboard
+shows real production traffic alongside local dev traffic in the same
+panels. Verified end-to-end in an actual browser session with real
+generated traffic, not just that Grafana accepted the dashboard JSON —
+caught and fixed a real query bug in the process (the error-rate panel
+showed ambiguous "No data" instead of an explicit 0% with zero errors).
+Full story in `docs/technical-decisions.md`.

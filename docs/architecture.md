@@ -370,6 +370,20 @@ free). Grafana dashboard **auto-provisioned** (datasource + dashboard JSON as
 files, not manual clicking) — 3 required panels: request count, latency, error
 rate.
 
+**Verified working end-to-end**, not just "should work": `docker compose up
+--build` locally, real traffic generated against the `api` service,
+confirmed all 3 panels render actual data in a real browser session (not
+just that Grafana accepted the JSON) — including catching and fixing a real
+issue where the error-rate query showed ambiguous "No data" instead of an
+explicit 0% when there had genuinely been zero errors (`or on(environment)
+... * 0` fallback in the PromQL).
+
+**Dual scrape targets**: Prometheus scrapes both the local `api` service
+*and* the live AWS deployment (`monitoring/prometheus.yml`), labeled by an
+`environment` label — the dashboard shows real production traffic
+alongside local dev traffic in the same panels, not just synthetic local
+test calls.
+
 ## Demo frontend (non-graded extra)
 
 Lightweight **Streamlit** app, separate service, calls the FastAPI `/predict`
