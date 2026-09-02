@@ -6,7 +6,9 @@
 # traffic. See docs/architecture.md / docs/technical-decisions.md.
 #
 # A push touching this file auto-redeploys the EC2-hosted instance of this
-# stack via SSM Run Command -- see .github/workflows/deploy-monitoring.yml.
+# stack via SSM Run Command -- see .github/workflows/deploy-monitoring.yml
+# (which needs its own $HOME set explicitly -- AWS-RunShellScript's root
+# shell doesn't set one, which broke `git config --global` on the first run).
 
 services:
   api:
