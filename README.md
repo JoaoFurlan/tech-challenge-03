@@ -122,6 +122,66 @@ savings. It does deliver a real size win (35% smaller than FP32) if
 footprint matters more than latency. Full reasoning in
 `docs/technical-decisions.md`.
 
+## AWS architecture: real-time vs. batch
+
+Three deploy patterns exist for a model like this — the right one depends on
+what the workload actually needs, not a general preference:
+
+| | Batch | Real-time | Serverless |
+|---|---|---|---|
+| Latency | High, tolerated | Low, deterministic | Variable (cold start) |
+| Cost shape | Concentrated in scheduled runs | Constant (infra always on) | Aligned to demand |
+| Fits this project? | No — no recurring bulk workload to run over | **Yes** | No — cold start unacceptable |
+
+**Real-time**, not batch: a laudo comes in and a hospital needs an
+urgent/attention/normal answer immediately, not after the next scheduled
+run — the whole point of triage is catching the urgent case *now*. Batch
+also has nothing to batch here — there's no recurring stream of laudos
+queued up for offline processing, just individual reports arriving one at
+a time. Serverless (Lambda) is ruled out for the same underlying reason as
+batch is ruled in against: per-invocation cold start is incompatible with
+consistent low latency in a clinical tool, even though it would otherwise
+fit the "one request at a time" shape. The real-time pattern's downside —
+cost is constant rather than usage-proportional, since the model has to
+stay loaded and warm — is an acceptable, deliberate trade for a use case
+where latency has direct clinical consequences.
+
+Within AWS's real-time options specifically:
+
+- **App Runner** (documented target) — always-warm container, no
+  instance to provision or patch, point it at an ECR image tag and it
+  runs. Closest fit to "real-time inference with minimal ops burden."
+- **Raw EC2** — same always-on behavior, but the ops burden (provisioning,
+  patching, health checks) that App Runner exists to remove falls back on
+  us.
+- **Lambda** — ruled out above (cold start).
+- **AWS Batch** — wrong shape entirely; built for scheduled/bulk jobs, not
+  a standing inference endpoint.
+- **SageMaker** — a full managed ML platform (model registry, managed
+  endpoints, governance) — real capability, but disproportionate setup for
+  a single lightweight classifier.
+
+**Actually deployed on Elastic Beanstalk, single-instance Docker
+platform**, not App Runner — a late, real constraint, not a design
+change: App Runner isn't part of AWS Free Tier, discovered only when
+attempting the real deployment. Beanstalk on a single free-tier EC2
+instance is the closest Free-Tier-eligible match to App Runner's intent —
+same always-warm, no-cold-start property, and Beanstalk still absorbs most
+of the manual EC2 operational burden (provisioning, health checks,
+deployment) that App Runner would have handled directly. Specifically the
+single-instance environment type, not load-balanced/auto-scaling — that
+tier provisions an Elastic Load Balancer, which is billed separately and
+isn't Free Tier eligible. The reasoning above is still the *documented*
+architecture decision; the deployed service differs from it for this one
+budget-driven reason, called out explicitly rather than silently swapped.
+Full pivot story in `docs/technical-decisions.md`.
+
+A production-hardened version of this same real-time architecture would
+also need API rate limiting (anti-abuse and cost control — real-time's
+constant-cost shape makes unbounded traffic a direct cost leak, not just a
+security concern) and encryption in transit/at rest for laudo text, since
+it's patient data.
+
 ## Monitoring
 
 Docker Compose stack: api + prometheus + grafana, dashboard
