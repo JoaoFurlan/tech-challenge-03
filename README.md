@@ -124,7 +124,7 @@ footprint matters more than latency. Full reasoning in
 
 ## Monitoring
 
-`docker compose up --build` — api + prometheus + grafana, dashboard
+Docker Compose stack: api + prometheus + grafana, dashboard
 auto-provisioned (not clicked together manually) with the 3 required
 panels: request rate, latency (P50/P95/P99), error rate. Prometheus scrapes
 both the local `api` service and the live AWS deployment, so the dashboard
@@ -134,3 +134,67 @@ generated traffic, not just that Grafana accepted the dashboard JSON —
 caught and fixed a real query bug in the process (the error-rate panel
 showed ambiguous "No data" instead of an explicit 0% with zero errors).
 Full story in `docs/technical-decisions.md`.
+
+### Running it locally
+
+```
+docker compose up --build
+```
+
+| Service | URL |
+|---|---|
+| API | http://localhost:8000 (`/predict`, `/health`, `/metrics`) |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3000 (anonymous viewer access, no login) |
+
+Generate some traffic to see the dashboard populate — e.g.
+`curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{"text": "..."}'`,
+or point the Streamlit frontend's `API_URL` at `http://localhost:8000`.
+
+### Running it on AWS (for the demo video)
+
+**Not deployed yet as of this writing** — this is the plan, not a
+completed step. Unlike the API (always-on, auto-deployed by CI on every
+push), this stack is stood up temporarily on a plain EC2 instance
+specifically for recording the STAR video, then torn down — see
+`docs/technical-decisions.md` for why raw EC2 rather than Beanstalk here
+(the multi-container setup doesn't fit Beanstalk's single-container Docker
+platform without disproportionate extra config for something temporary).
+
+1. Launch a plain EC2 instance (t2/t3.micro), IAM instance profile with S3
+   read (DVC bucket) + SSM permissions, security group open only on
+   Grafana's port (3000) — no SSH port needed.
+2. Install Docker + Compose (user-data script at launch).
+3. `git clone` this repo, `dvc pull` the model artifacts.
+4. `docker compose up -d --build` — the exact same file as local, nothing
+   different for the deployed version.
+5. Verify at `<instance-public-ip>:3000`, record the video segment.
+6. Terminate the instance once done.
+
+CI/CD to this instance (via AWS Systems Manager Run Command, no SSH keys
+involved — same OIDC role already used for the API) is a planned addition
+once the instance exists to target.
+
+### How this would differ in a real production environment
+
+What's simplified here for a 2-week solo challenge vs. what a real
+always-on clinical deployment would need:
+
+- **Managed observability, not a single Docker Compose instance**: Amazon
+  Managed Service for Prometheus + Amazon Managed Grafana (or a Prometheus
+  Operator on EKS) for high availability, proper retention/backup, and no
+  single point of failure — one EC2 instance running `docker-compose` is a
+  demo convenience, not a production pattern.
+- **Alerting, not just dashboards**: Grafana/Alertmanager rules wired to
+  actual on-call paging (PagerDuty, Opsgenie, etc.) — a dashboard nobody is
+  actively watching doesn't catch an incident at 3am.
+- **Authenticated access with RBAC**, not anonymous viewer — used here
+  purely for local demo convenience.
+- **Model-quality monitoring alongside operational metrics** — this stack
+  only covers request count/latency/error rate (infrastructure health);
+  real deployment would add drift detection (PSI/KS, mentioned as
+  forward-looking in `docs/model-card.md`, not implemented here) to catch
+  the model silently degrading even while the service itself stays healthy.
+- **Permanent infrastructure, not spin-up/tear-down** — the temporary EC2
+  pattern used for this demo would become continuously-provisioned,
+  likely autoscaled/HA infrastructure in a real deployment.
