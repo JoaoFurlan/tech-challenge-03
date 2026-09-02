@@ -66,9 +66,11 @@ if st.button("Classify", type="primary", disabled=not text.strip()):
             if result.get("low_confidence"):
                 st.warning(
                     "⚠️ Low confidence: this text shares no vocabulary with the "
-                    "training data, so the category above is driven by the "
-                    "model's default bias, not real evidence. Urgency has been "
-                    "floored at ATTENTION rather than risking a false NORMAL."
+                    "training data, so the category and urgency above are "
+                    "driven by the model's default bias, not real evidence. As "
+                    "a safety measure, low-confidence results are never shown "
+                    "as NORMAL — ATTENTION is the minimum, not necessarily "
+                    "what's displayed above."
                 )
 
 st.divider()
