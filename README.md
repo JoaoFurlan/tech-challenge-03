@@ -15,8 +15,9 @@ Beanstalk. Not the documented target (App Runner — see `docs/architecture.md`
 § AWS architecture for why); the written justification below reflects the
 documented decision regardless. Torn down after the grading/demo window.
 Deployed automatically by CI on every push to `main` — GitHub Actions runs
-lint → test → build → push to ECR → deploy to Beanstalk → verify health,
-no manual steps.
+lint → test → build → smoke test → push to ECR → deploy to Beanstalk →
+verify health (auto-rollback on failure), no manual steps. See
+[§ CI/CD](#cicd) for the full pipeline.
 
 **Demo frontend** (non-graded extra, `frontend/streamlit_app.py`): a
 Streamlit UI over `/predict`, hosted separately on **Streamlit Community
@@ -24,6 +25,80 @@ Cloud** (free) rather than a second AWS environment — deliberately kept off
 the same AWS account to avoid doubling Free Tier EC2 instance-hours for a
 component that's just an HTTP client. Deploy URL to be added here once set
 up.
+
+**Check the live API works right now**:
+
+```bash
+curl http://medsys.us-east-1.elasticbeanstalk.com/health
+curl -X POST http://medsys.us-east-1.elasticbeanstalk.com/predict \
+  -H "Content-Type: application/json" \
+  -d '{"text": "Patient presents with acute chest pain and shortness of breath, elevated troponin levels observed"}'
+```
+
+## Contents
+
+- [Getting started](#getting-started) — setup, running the API, tests, linting
+- [Dataset](#dataset)
+- [Model](#model)
+- [Training & experimentation](#training--experimentation) — reproducing every MLflow run
+- [Latency optimization](#latency-optimization)
+- [AWS architecture: real-time vs. batch](#aws-architecture-real-time-vs-batch)
+- [Data & retrain pipeline flow](#data--retrain-pipeline-flow) — including [running the Airflow DAG](#running-the-dag-locally)
+- [Monitoring](#monitoring) — including running it [locally](#running-it-locally) and [on AWS](#running-it-on-aws)
+- [CI/CD](#cicd) — what runs on every push, and how to check it
+
+## Getting started
+
+**Prerequisites**: Python 3.11+, [`uv`](https://docs.astral.sh/uv/), Docker
+Desktop (with `buildx`) for anything container-based, AWS CLI configured
+for anything touching S3/DVC or the AWS-hosted pieces.
+
+```bash
+git clone https://github.com/JoaoFurlan/tech-challenge-03-v1
+cd tech-challenge-03-v1
+uv sync --group dev          # base + dev deps (fastapi, pytest, ruff, ...)
+```
+
+Dependencies are split into optional `uv` groups so the served Docker image
+never installs what it doesn't need (see `Dockerfile`) — pull in more as you
+need them:
+
+| Need | Command |
+|---|---|
+| Run/modify the API, run tests, lint | `uv sync --group dev` |
+| Train, retrain, export to ONNX, run MLflow experiments | `uv sync --group training` |
+| Run the Streamlit demo frontend | `uv sync --extra frontend` |
+
+**Model artifacts aren't in git** (DVC-tracked, in S3) — pull them before
+running the API or training scripts locally:
+
+```bash
+uv run --group training dvc pull models/pipeline_fp32.onnx models/vocabulary.json
+```
+
+**Run the tests**:
+
+```bash
+uv run pytest -q
+```
+
+**Lint** (same check CI runs):
+
+```bash
+uv run ruff check .
+```
+
+**Run the API without Docker** (fastest loop for iterating on `app/`):
+
+```bash
+uv run uvicorn app.main:app --reload --port 8000
+```
+
+Then `curl http://localhost:8000/health`, or open
+http://localhost:8000/docs for interactive Swagger docs.
+
+**Run the API + full monitoring stack via Docker** — see
+[Monitoring § Running it locally](#running-it-locally) below.
 
 ## Dataset
 
@@ -100,6 +175,39 @@ data — it would need real triage-style text, a genuine scope increase. Full
 writeup in `docs/technical-decisions.md` and `docs/model-card.md` §
 Caveats. This is exactly the kind of limitation `docs/model-card.md`
 already exists to document plainly rather than hide.
+
+## Training & experimentation
+
+Every step below is a plain script, runnable directly (`uv sync --group
+training` first) — the Airflow DAG (see
+[§ Running the DAG locally](#running-the-dag-locally)) automates the last
+two of these (`ingest` + `train`) for the retrain-demo use case, but the
+scripts underneath are the same ones you can run by hand for development.
+
+| Step | Command | MLflow experiment |
+|---|---|---|
+| Model selection | `uv run python -m training.model_selection` | `model-selection` |
+| Feature engineering | `uv run python -m training.feature_engineering` | `feature-engineering` |
+| Hyperparameter tuning | `uv run python -m training.hyperparameter_tuning` | `hyperparameter-tuning` |
+| Final train + evaluate | `uv run python -m training.train_final` | `final-model` |
+| ONNX export + latency benchmark | `uv run python -m optimization.export_and_benchmark` | `latency-optimization` |
+
+Each of the first four stages was run once, its results reviewed, and the
+result fed into the next stage's design — full grids and reasoning for
+every stage in `docs/technical-decisions.md`, not just the final numbers
+above. `training.train_final` is the one that actually produces
+`models/pipeline.joblib` + `models/vocabulary.json` (what the DAG's
+`train`/`save_model` tasks call); `optimization.export_and_benchmark`
+turns that into `models/pipeline_fp32.onnx` (what the API actually
+serves) and produces the latency comparison table below.
+
+Inspect any run's metrics/params/artifacts (confusion matrices, MLflow's
+own model registry entries) via MLflow's UI, pointed at the same local
+SQLite store all of these write to:
+
+```bash
+uv run --group training mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
 
 ## Latency optimization
 
@@ -182,6 +290,170 @@ constant-cost shape makes unbounded traffic a direct cost leak, not just a
 security concern) and encryption in transit/at rest for laudo text, since
 it's patient data.
 
+## Data & retrain pipeline flow
+
+How a laudo dataset turns into a live deployed model, and how that differs
+between this project's local Airflow setup and what a hosted, production
+version would look like. Airflow here is **standalone mode, manually
+triggered** — it demonstrates retrain orchestration, it isn't wired into
+automatic deployment (see `docs/technical-decisions.md` for why that
+extra wiring is out of scope here).
+
+**Today: local Airflow, DAG output is a manual hand-off**
+
+```
+[Kaggle CSVs] (one-time)
+      |
+      v
+data/ (local)  --dvc add + dvc push-->  S3 (DVC remote)
+                                              |
+   ==== Airflow DAG boundary (manual trigger) ====
+   |                                          |
+   |  ingest task: dvc pull  <----------------+
+   |       |
+   |       v
+   |  load_raw() / split_test()  -->  pool (85%) + test (15%, held out)
+   |       |
+   |       v
+   |  train task: fit Pipeline(TF-IDF + ComplementNB) on pool
+   |       |
+   |       v
+   |  evaluate on test  -->  log metrics/params to MLflow
+   |       |
+   |       v
+   |  save_model task: write pipeline.joblib + vocabulary.json (local disk)
+   |
+   ==== DAG ends here ====
+                |
+                v  (manual step, not in the DAG)
+     optimization/export_and_benchmark.py
+                |
+                v
+     pipeline_fp32.onnx + latency benchmark numbers
+                |
+     dvc add + dvc push (manual) --> S3
+                |
+     commit .dvc pointers + git push (manual) --> GitHub main
+                |
+                v  (automatic from here -- CI/CD already wired)
+     ci-cd.yml: lint -> test -> dvc pull (model) -> docker build
+                |
+                v
+     push to ECR --> update Dockerrun.aws.json --> deploy to Elastic Beanstalk
+                |
+                v
+     Live API (/predict, /metrics) --scraped by--> Prometheus --> Grafana
+```
+
+The DAG's own output (`pipeline.joblib`) isn't what the live API serves
+(`pipeline_fp32.onnx`) — connecting the two today is a manual chain
+(export, `dvc push`, `git push`), not automatic.
+
+**Production-level: hosted Airflow, fully wired (not built here)**
+
+```
+[Real data source: hospital DB / event stream / scheduled export]
+      |
+      v  (scheduled OR event-triggered -- no human clicking "run")
+   ==== Airflow DAG boundary (hosted: MWAA or EC2, always running) ====
+   |
+   |  ingest task: query DB / consume event / pull new S3 batch
+   |       |
+   |       v
+   |  train task: fit + evaluate + log to MLflow
+   |       |
+   |       v
+   |  quality gate: compare new metrics vs. current production model
+   |       |            (skip deploy if the new model is worse)
+   |       v
+   |  export task: ONNX export + benchmark  <-- new task, not in today's DAG
+   |       |
+   |       v
+   |  publish task: dvc push (Airflow's own S3 write credentials)
+   |       |
+   |       v
+   |  commit + push task: update .dvc pointers, push to main
+   |       |              (bot git identity/token, not a person's)
+   |
+   ==== DAG ends here, but it just triggered CI/CD ====
+                |
+                v  (automatic, same pipeline as today)
+     ci-cd.yml: lint -> test -> dvc pull -> build -> push ECR -> deploy
+                |
+                v
+     Live API updated automatically, no human in the loop
+```
+
+The ML steps look almost the same in both — the real difference is that
+today's DAG output is a dead end a human has to manually carry the rest of
+the way, while the hosted version closes the loop itself, plus adds a
+quality gate that doesn't exist today to stop a worse retrain from
+auto-deploying. Full cost/scope reasoning for why this isn't built for
+real here is in `docs/technical-decisions.md`.
+
+### Running the DAG locally
+
+**Runs in Docker, not directly on the host.** Apache Airflow doesn't
+support native Windows at all (it depends on POSIX-only APIs) — this
+isn't the "official production docker-compose is disproportionate for a
+3-task demo" tradeoff mentioned above, it's a hard OS incompatibility with
+no workaround short of a different OS or a container. `airflow/` holds a
+small dedicated Dockerfile + `docker-compose.yml` (standalone mode, one
+container) — separate from the root `docker-compose.yml`, since this is a
+different concern (orchestrating retraining, not serving/observing the
+API) and isn't part of that stack.
+
+The container mounts this repo read-write, so `ingest`/`train`/`save_model`
+write real files back into `data/`/`models/` on your machine, same as
+running the training scripts directly. It does **not** share the host's
+`mlflow.db` — reusing it would try to reuse the `final-model` experiment's
+already-recorded artifact path, which is an absolute Windows path and
+isn't writable from Linux, so the container gets its own separate MLflow
+store instead (`training/mlflow_config.py`, `$MLFLOW_TRACKING_URI`).
+
+```bash
+cd airflow
+docker compose up --build -d
+```
+
+The container prints a generated admin password to its logs on first
+boot — `docker compose logs | Select-String "Password for user"`
+(PowerShell) or `docker compose logs | grep "Password for user"`
+(bash/zsh) — then open http://localhost:8081 and log in as `admin` with
+that password.
+
+Trigger a run (UI: click the play button on `train_pipeline_dag`, or CLI):
+
+```bash
+docker compose exec airflow airflow dags unpause train_pipeline_dag
+docker compose exec airflow airflow dags trigger train_pipeline_dag
+```
+
+**Verified working end-to-end**, not just "should work" — run twice against
+the real dataset (not a toy/mocked run): both runs completed all three
+tasks (`ingest` → `train` → `save_model`) successfully, confirming
+idempotency, and the metrics the second run logged and printed matched the
+README's reported numbers above **exactly** (`f1_macro=0.7786`,
+`undertriage=0.0498`) — genuine reproducibility of the already-reported
+result from a completely different OS/environment (Linux container vs.
+the native Windows runs that originally produced those numbers), not
+coincidence.
+
+Check a run's state:
+
+```bash
+docker compose exec airflow airflow tasks states-for-dag-run \
+  train_pipeline_dag "<run_id from the trigger output>"
+```
+
+Tear down when done (the named volume keeps Airflow's own state — admin
+user, DAG pause state, its MLflow store — across restarts; add `-v` to
+also wipe that):
+
+```bash
+docker compose down
+```
+
 ## Monitoring
 
 Docker Compose stack: api + prometheus + grafana, dashboard
@@ -211,29 +483,42 @@ Generate some traffic to see the dashboard populate — e.g.
 `curl -X POST http://localhost:8000/predict -H "Content-Type: application/json" -d '{"text": "..."}'`,
 or point the Streamlit frontend's `API_URL` at `http://localhost:8000`.
 
-### Running it on AWS (for the demo video)
+### Running it on AWS
 
-**Not deployed yet as of this writing** — this is the plan, not a
-completed step. Unlike the API (always-on, auto-deployed by CI on every
-push), this stack is stood up temporarily on a plain EC2 instance
-specifically for recording the STAR video, then torn down — see
-`docs/technical-decisions.md` for why raw EC2 rather than Beanstalk here
-(the multi-container setup doesn't fit Beanstalk's single-container Docker
-platform without disproportionate extra config for something temporary).
+**Deployed and verified** — real EC2 instance, real generated traffic,
+dashboard confirmed rendering it in an actual browser session, not just
+"should work." Unlike the API (always-on, auto-deployed by CI on every
+push), this stack runs on a plain EC2 instance stood up specifically for
+the grading/demo window, then torn down — see `docs/technical-decisions.md`
+for why raw EC2 rather than Beanstalk here (the multi-container setup
+doesn't fit Beanstalk's single-container Docker platform without
+disproportionate extra config for something temporary).
+
+**How it was stood up** (for reference / standing up a fresh instance):
 
 1. Launch a plain EC2 instance (t2/t3.micro), IAM instance profile with S3
    read (DVC bucket) + SSM permissions, security group open only on
-   Grafana's port (3000) — no SSH port needed.
-2. Install Docker + Compose (user-data script at launch).
-3. `git clone` this repo, `dvc pull` the model artifacts.
+   Grafana's port (3000) — no SSH port needed, access is via SSM Session
+   Manager.
+2. Install Docker + Compose + `docker-buildx` (user-data script at launch
+   — `buildx` specifically, not just the `docker-compose` CLI plugin,
+   since `docker compose build` needs it and it isn't installed by
+   default).
+3. `git clone` this repo, `dvc pull` the model artifacts (via `uv`/`uvx`,
+   not plain `pip` — much faster dependency resolution on a small
+   instance, see `docs/technical-decisions.md`).
 4. `docker compose up -d --build` — the exact same file as local, nothing
    different for the deployed version.
-5. Verify at `<instance-public-ip>:3000`, record the video segment.
-6. Terminate the instance once done.
+5. Verify at `<instance-public-ip>:3000`.
 
-CI/CD to this instance (via AWS Systems Manager Run Command, no SSH keys
-involved — same OIDC role already used for the API) is a planned addition
-once the instance exists to target.
+**Auto-redeploys on push** — `.github/workflows/deploy-monitoring.yml`
+watches for pushes touching `docker-compose.yml`, `monitoring/**`,
+`app/**`, `Dockerfile`, or `models/*.dvc`, and redeploys via **AWS Systems
+Manager Run Command** (no SSH, no keys — the same OIDC role already used
+for the API, extended with a scoped `ssm:SendCommand` policy for this one
+instance): `git pull` → `dvc pull` → `docker compose up -d --build`, all
+on the instance, triggered from CI. Check its status the same way as any
+other workflow — GitHub → Actions tab → "Deploy monitoring stack".
 
 ### How this would differ in a real production environment
 
@@ -258,3 +543,43 @@ always-on clinical deployment would need:
 - **Permanent infrastructure, not spin-up/tear-down** — the temporary EC2
   pattern used for this demo would become continuously-provisioned,
   likely autoscaled/HA infrastructure in a real deployment.
+
+## CI/CD
+
+Two independent GitHub Actions workflows — independent because they watch
+different trigger paths and target different resources, so they run
+concurrently when a push touches both, not sequentially:
+
+| Workflow | Triggers on | Does |
+|---|---|---|
+| `.github/workflows/ci-cd.yml` ("CI/CD") | Every push to `main` (and PRs, minus the deploy job) | lint → test → build → **smoke test** → push to ECR → deploy to Beanstalk → health check (**auto-rollback** on failure) |
+| `.github/workflows/deploy-monitoring.yml` ("Deploy monitoring stack") | Pushes touching `docker-compose.yml`, `monitoring/**`, `app/**`, `Dockerfile`, or `models/*.dvc` | Redeploys the EC2 monitoring stack via SSM (see [§ Running it on AWS](#running-it-on-aws)) |
+
+**Check status**: GitHub → **Actions** tab lists every run, newest first,
+by workflow name. A failed `ci-cd.yml` run means either a real code
+problem (lint/test failure) or a deploy that got rejected — read the
+failing step's log; the deploy step's automated rollback means production
+should still be healthy even if the job itself is red.
+
+**What's gated before anything reaches production**:
+
+- `lint`/`test` must pass before `build-and-push` even starts.
+- The **smoke test** runs the actual built image and makes a real
+  `/predict` call, checking the response is well-formed (right schema,
+  known category/urgency values) — before the image is ever pushed to ECR.
+  This catches "the container is fundamentally broken" (missing model
+  file, crashing code path); it does **not** catch "the model's
+  predictions got worse" — that needs ground truth, a different, larger
+  problem that was considered and deliberately not built (see
+  `docs/technical-decisions.md`).
+- After deploy, a health check failure triggers an **automatic rollback**
+  to the previously-live version, so a bad deploy self-heals within the
+  same run instead of leaving production broken until someone notices.
+
+**Does every push retrain the model?** No — `ci-cd.yml` only `dvc pull`s
+whatever model artifact the committed `.dvc` pointer files currently
+reference; it never calls the training code. The model in production only
+changes when someone deliberately updates those pointers (train → export
+to ONNX → `dvc push` → commit the new `.dvc` files → push) — see
+[§ Data & retrain pipeline flow](#data--retrain-pipeline-flow) for the
+full chain and why it's a manual hand-off today, not automatic.

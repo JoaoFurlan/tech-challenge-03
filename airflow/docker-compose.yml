@@ -1,0 +1,33 @@
+# Standalone-mode Airflow for the train/retrain demo DAG. Separate from the
+# main docker-compose.yml at the repo root (a different concern -- this is
+# about orchestrating retraining, not serving/observing the API), and not
+# started as part of that stack. See README.md § Data & retrain pipeline flow.
+#
+# Run from the repo root:  docker compose -f airflow/docker-compose.yml up --build
+# UI at http://localhost:8080 once it prints the generated admin password.
+
+services:
+  airflow:
+    build: .
+    ports:
+      - "8081:8080"
+    environment:
+      - AIRFLOW_HOME=/opt/airflow
+      - AIRFLOW__CORE__DAGS_FOLDER=/opt/airflow/project/dags
+      - AIRFLOW__CORE__LOAD_EXAMPLES=false
+    volumes:
+      # Read-write: dvc pull / the DAG's train+save_model tasks write real
+      # files back into data/ and models/, same as running them directly.
+      - ..:/opt/airflow/project
+      # Airflow's own metadata DB/logs -- kept out of the repo entirely,
+      # persisted in a named volume instead of bind-mounted.
+      - airflow-home:/opt/airflow
+      # DVC's S3 remote needs the same AWS credentials already configured
+      # on the host, read-only. $USERPROFILE, not $HOME -- native Windows
+      # PowerShell doesn't set $HOME at all (only Git Bash synthesizes
+      # one), so $HOME silently resolved to blank there.
+      - ${USERPROFILE}/.aws:/home/airflow/.aws:ro
+    command: standalone
+
+volumes:
+  airflow-home:

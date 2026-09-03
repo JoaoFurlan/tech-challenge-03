@@ -17,7 +17,7 @@ from pathlib import Path
 import mlflow
 import mlflow.sklearn
 import pandas as pd
-from joblib import dump
+from joblib import dump, load
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import classification_report, confusion_matrix, f1_score
 from sklearn.naive_bayes import ComplementNB
@@ -42,7 +42,13 @@ TFIDF_PARAMS = {
 CLF_PARAMS = {"alpha": 0.5, "norm": True}
 
 
-def run() -> dict:
+def train_and_evaluate() -> dict:
+    """Fit, evaluate once against held-out test, log to MLflow, save the pipeline.
+
+    Split out from `run()` so the Airflow retrain DAG (dags/train_pipeline_dag.py)
+    can hand off just `model_path` (a string) between tasks via XCom, rather than
+    the fitted pipeline object itself -- see docs/technical-decisions.md.
+    """
     pool, test = load_pool_and_test()
     X_pool, y_pool = pool["medical_abstract"], pool["condition_name"]
     X_test, y_test = test["medical_abstract"], test["condition_name"]
@@ -105,14 +111,6 @@ def run() -> dict:
     MODELS_DIR.mkdir(exist_ok=True)
     dump(pipeline, MODEL_PATH)
 
-    # app/model.py's low-confidence guard needs the vectorizer's vocabulary
-    # to detect near-empty TF-IDF feature vectors (e.g. "stomachache" --
-    # not a substring match of "stomach", genuinely absent from training
-    # vocabulary) -- see docs/technical-decisions.md. Exported as plain
-    # JSON so the served app doesn't need scikit-learn/joblib at runtime.
-    vocabulary = sorted(pipeline.named_steps["tfidf"].vocabulary_.keys())
-    VOCABULARY_PATH.write_text(json.dumps(vocabulary))
-
     recall_str = "  ".join(
         f"{k.removeprefix('recall_')}={v:.3f}"
         for k, v in per_class_metrics.items()
@@ -128,12 +126,40 @@ def run() -> dict:
     print(f"Saved pipeline to {MODEL_PATH}")
 
     return {
+        "model_path": str(MODEL_PATH),
         "f1_macro": f1_macro,
         "accuracy": accuracy,
         "undertriage_rate": undertriage_rate,
         "overtriage_rate": overtriage_rate,
         **per_class_metrics,
     }
+
+
+def save_vocabulary(model_path: str) -> str:
+    """Derive vocabulary.json from a saved pipeline -- a separate step so the
+    Airflow DAG's `save_model` task only needs `model_path` (from `train`'s
+    XCom return value), not the pipeline object itself.
+
+    app/model.py's low-confidence guard needs the vectorizer's vocabulary to
+    detect near-empty TF-IDF feature vectors (e.g. "stomachache" -- not a
+    substring match of "stomach", genuinely absent from training vocabulary)
+    -- see docs/technical-decisions.md. Exported as plain JSON so the served
+    app doesn't need scikit-learn/joblib at runtime.
+    """
+    pipeline = load(model_path)
+    vocabulary = sorted(pipeline.named_steps["tfidf"].vocabulary_.keys())
+    VOCABULARY_PATH.write_text(json.dumps(vocabulary))
+    print(f"Saved vocabulary to {VOCABULARY_PATH}")
+    return str(VOCABULARY_PATH)
+
+
+def run() -> dict:
+    """CLI/single-shot entry point: train_and_evaluate() + save_vocabulary()
+    in one call -- what `python -m training.train_final` still does.
+    """
+    result = train_and_evaluate()
+    save_vocabulary(result["model_path"])
+    return result
 
 
 if __name__ == "__main__":

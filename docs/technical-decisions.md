@@ -460,6 +460,51 @@ choice given Beanstalk's own API surface is broad and evolving in ways a
 hand-maintained policy can't keep pace with — an explicit, deliberate
 trade-off, not the path of least resistance taken by default.
 
+**Pre-deploy smoke test and automated rollback — closing two real gaps in
+the deploy pipeline.** Neither was theoretical: reviewing the pipeline
+against "what would real production need" surfaced that (1) Beanstalk's
+health check, and our own polling of it, relies on `/health`
+(`app/main.py`), which is a static `{"status": "ok"}` with zero dependency
+on the model — a build with a missing/corrupted `pipeline_fp32.onnx` or a
+broken `/predict` path would report perfectly healthy right up until a real
+user hit it; and (2) a failed post-deploy health check just failed the CI
+job, leaving whatever got deployed live and broken until someone noticed
+and manually fixed it.
+
+**Smoke test**: after `docker build`, the image is run right there in the
+CI runner (`docker run -d`, poll `/health`, then a real `POST /predict`)
+and the response validated for shape — known category, known urgency
+tier, correct types — before the image is ever pushed to ECR. This is
+deliberately *not* a model-quality/regression gate (comparing against
+ground truth, blocking a worse retrain) — that's a different, larger
+problem, considered and explicitly declined earlier (see the retrain-gate
+discussion this DAG's design grew out of); this only proves the deployed
+thing *functions*, not that it's *accurate*. Verified for real, not just
+written: built the actual image locally, ran the exact commands the
+workflow uses, confirmed a good response passes (`jq -e` exits 0) and a
+deliberately malformed one fails it (exits 1) — using real `jq` via
+`docker run ghcr.io/jqlang/jq`, since the local dev shell didn't have `jq`
+installed (GitHub's `ubuntu-latest` runners do, by default).
+
+**Automated rollback**: the deploy step now records the environment's
+live `VersionLabel` via `describe-environments` *before* calling
+`update-environment` with the new one. If the new version's health check
+comes back anything other than `Green`, it automatically re-deploys the
+captured previous version and polls again to confirm *that* comes back
+healthy — the job still exits non-zero either way (so a failed deploy is
+never silently invisible), but production serves the last-known-good
+version again within the same run instead of sitting broken. Guards the
+edge case of no previous version existing (first-ever deploy) by skipping
+rollback and failing plainly instead of trying to roll back to `None`.
+
+**What this still doesn't fix, on purpose**: true redundancy (a
+load-balanced/multi-AZ Beanstalk tier, or blue-green swaps) would need an
+Application Load Balancer, which isn't Free Tier eligible — the same
+constraint that kept the environment single-instance in the first place.
+Both additions here are free (CI-only logic, no new AWS resources) and
+target the two failure modes that mattered most without reopening that
+cost tradeoff.
+
 ## Airflow in standalone mode
 
 **Decision:** `airflow standalone` (SQLite backend), not the official
@@ -470,6 +515,81 @@ official production compose is disproportionate for a 3-task demo. The DAG is
 triggered manually (there's no real stream of new data feeding this project),
 demonstrating orchestration capability rather than an actual recurring
 retraining need in this specific context.
+
+**3 tasks, not 1 — and why the file-path-through-XCom design, not the
+fitted pipeline object:** `ingest` (`dvc pull`) → `train` (fit + evaluate +
+log to MLflow + save `pipeline.joblib`) → `save_model` (derive
+`vocabulary.json` from the saved pipeline). `training/train_final.py`'s
+`run()` already did all of `train` + `save_model`'s work in one function;
+splitting it was purely to make the DAG's graph visibly match the
+challenge's "load CSV → train → save model" wording as separate, inspectable
+nodes, not because the code naturally wanted to split there. The split
+point matters: `train` fits, evaluates, logs to MLflow, *and* writes
+`pipeline.joblib` to disk, then hands `save_model` only the file path (a
+string) via XCom — not the fitted `Pipeline` object itself. Passing the
+object would need `enable_xcom_pickling` (Airflow's default XCom backend
+only accepts JSON-serializable values) and would write a ~1.2MB blob into
+Airflow's metadata DB — legal, but atypical, non-idiomatic XCom usage.
+"Pass a reference, not the payload" is the standard Airflow idiom for
+non-trivial data (it's also how Airflow scales this for real distributed
+executors, via custom XCom backends that transparently offload large
+values to S3/GCS). Since the split point is *after* evaluation/metric
+logging and *before* the file write, none of the metric-computation logic
+moved — `run()` itself is now a two-line wrapper (`train_and_evaluate()` +
+`save_vocabulary()`) preserving the exact original single-command
+behavior, so the already-reported README numbers stay reproducible via
+`python -m training.train_final` unchanged.
+
+**Airflow doesn't run on native Windows — real blocker, not a
+theoretical one:** discovered by actually trying to run it in an isolated
+`uv venv` on the host (the original plan for keeping Airflow's
+dependencies separate from `training`'s, to avoid a resolver conflict
+between Airflow's strict version pins and `mlflow`/`pandas`/`scikit-learn`).
+Installed cleanly, then failed immediately on `airflow version` with
+`AttributeError: module 'os' has no attribute 'register_at_fork'` —
+Airflow relies on a POSIX-only API with no Windows equivalent; its own
+startup warning says as much ("via WSL2 ... or via Linux Containers").
+Not a dependency-conflict problem environment isolation could fix — an OS
+incompatibility. **Fix:** moved Airflow into a dedicated Docker container
+(`airflow/Dockerfile` + `airflow/docker-compose.yml`, separate from the
+root `docker-compose.yml` — a different concern, not part of that stack).
+This actually preserves the original isolation goal cleanly: the official
+`apache/airflow` image plus `uv` installed inside it, with
+`UV_PROJECT_ENVIRONMENT` pointed at a container-local path so `uv run
+--group training ...` (what each task shells out to) creates its own venv
+inside the container rather than colliding with the bind-mounted repo's
+host-managed `.venv`. The repo is mounted read-write so `ingest`/`train`/
+`save_model` still write real files into `data/`/`models/` on the host,
+same as running the scripts directly.
+
+**A second real bug this surfaced: MLflow artifact-path collision across
+OSes.** The first real run inside the container failed with
+`PermissionError: [Errno 13] Permission denied: '/C:'` from deep inside
+`mlflow.log_text`. Cause: the container bind-mounts the whole repo,
+including the host's `mlflow.db` (SQLite tracking store) — and that db
+already had the `final-model` experiment registered from earlier native
+Windows runs, with an absolute Windows path (`C:\...`) baked into its
+`artifact_location`. MLflow experiments' `artifact_location` is fixed at
+creation time; reusing the same experiment name meant inheriting that
+Windows path, which Linux then tried (and failed) to interpret as
+`/C:/...`. **Fix:** `training/mlflow_config.py`'s `TRACKING_URI` now reads
+`$MLFLOW_TRACKING_URI` with the original hardcoded value as the default
+(no behavior change for native runs) — the Airflow container sets it to
+its own separate SQLite file
+(`sqlite:////opt/airflow/mlflow-training/mlflow.db`, in the container's
+named volume, not the bind-mounted repo), so it creates `final-model`
+fresh with a container-appropriate artifact path instead of colliding
+with the host's experiment history. Verified fixed by actually running the
+DAG successfully afterward, twice — not just reasoning about the cause.
+
+**Verification, not just "should work":** ran the DAG twice for real
+against the real dataset and real S3 remote (not a toy/mocked run). Both
+runs completed all three tasks successfully; the second run's logged
+metrics (`f1_macro=0.7786`, `undertriage=0.0498`) matched the README's
+already-reported numbers exactly — genuine cross-environment
+reproducibility (Linux container vs. the native Windows runs that
+originally produced those numbers, same fixed `random_state=42`), not
+assumed.
 
 ## Monitoring stack: dual scrape targets, and a real query bug caught
 

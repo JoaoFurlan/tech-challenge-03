@@ -291,12 +291,29 @@ artifacts). Uvicorn as the ASGI server.
 
 ## CI/CD
 
-GitHub Actions: **lint (ruff) → test (pytest) → build → push to ECR → deploy
-to Elastic Beanstalk**. Fully automated end to end — a push to `main` results
-in a live, verified deployment with no manual steps. Authentication via
-**OIDC** (IAM role trusting `token.actions.githubusercontent.com`, scoped to
-this repo) — no static AWS keys stored as GitHub secrets. Image tagged by
-commit SHA (never `latest`).
+GitHub Actions: **lint (ruff) → test (pytest) → build → smoke test → push to
+ECR → deploy to Elastic Beanstalk**. Fully automated end to end — a push to
+`main` results in a live, verified deployment with no manual steps.
+Authentication via **OIDC** (IAM role trusting
+`token.actions.githubusercontent.com`, scoped to this repo) — no static AWS
+keys stored as GitHub secrets. Image tagged by commit SHA (never `latest`).
+
+**Pre-deploy smoke test**: the freshly-built image is run right there in the
+CI runner and hit with a real `/predict` request before anything reaches ECR
+or Beanstalk. `/health` never touches the model (it's a static `{"status":
+"ok"}`), so it can't catch a missing/corrupted model file or a broken
+`/predict` code path — this closes that gap by exercising the real
+inference path and validating the response shape (known category/urgency
+values, correct types). It checks the response is well-formed, not that the
+prediction is *accurate* — that needs ground truth, a different, larger
+problem (see `technical-decisions.md`).
+
+**Automated rollback**: the deploy step now captures the environment's
+currently-live version *before* updating it. If the new version's health
+check fails, it automatically redeploys that previous version instead of
+leaving a broken one live — the CI job still fails (so the team knows), but
+production self-heals within the same run rather than staying down until
+someone notices.
 
 The build step needs `models/pipeline_fp32.onnx` (DVC-tracked, pushed to
 S3 — see § Latency optimization result) available in the Docker build
@@ -358,10 +375,25 @@ enough operational overhead to make that extra realism cheap.
 **Standalone mode** (`airflow standalone`, SQLite backend) — not the official
 multi-container production docker-compose (Postgres + Redis + webserver +
 scheduler + worker), which is disproportionate for a 3-task demo DAG. 3
-`@task`-decorated tasks: `dvc pull` (ingest) → train → save model artifact
-(+ log to MLflow). Demonstrated via manual trigger — no live data stream feeding
-this project, so there's no real recurring retrain need; the DAG proves the
-orchestration capability works, run at least twice to confirm idempotency.
+`@task`-decorated tasks: `ingest` (`dvc pull`) → `train` (fit + evaluate +
+log to MLflow + save `pipeline.joblib`) → `save_model` (derive
+`vocabulary.json` from the saved pipeline). Demonstrated via manual trigger
+— no live data stream feeding this project, so there's no real recurring
+retrain need; the DAG proves the orchestration capability works, run at
+least twice to confirm idempotency (verified: both runs succeeded, second
+run's metrics matched the README's reported numbers exactly).
+
+**Runs inside Docker** (`airflow/Dockerfile` + `airflow/docker-compose.yml`,
+separate from the root `docker-compose.yml`), not directly on the host —
+Apache Airflow doesn't support native Windows at all (POSIX-only APIs),
+discovered when actually trying to run it. Each task shells out to
+`uv run --group training ...` rather than importing training code into
+Airflow's own interpreter, keeping Airflow's dependencies isolated from
+scikit-learn/pandas/mlflow. `train` and `save_model` pass only a file path
+through XCom (Airflow's task-to-task data channel), not the fitted
+pipeline object — the idiomatic pattern for anything beyond a small value.
+Full story, including a real MLflow artifact-path collision this
+surfaced, in `technical-decisions.md`.
 
 ## Monitoring
 

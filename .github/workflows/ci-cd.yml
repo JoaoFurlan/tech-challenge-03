@@ -85,13 +85,68 @@ jobs:
         id: ecr-login
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push
+      - name: Build image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
+
+      # /health (app/main.py) never touches the model, so a build with a
+      # missing/corrupted model file or a broken /predict code path would
+      # still report healthy to Beanstalk's own health check later --
+      # this runs the actual built image and exercises the real inference
+      # path before anything reaches ECR or Beanstalk. Checks the response
+      # is well-formed (right schema, known category/urgency values), not
+      # that the prediction is *correct* -- that needs ground truth, a
+      # different problem (see docs/technical-decisions.md).
+      - name: Smoke test the built image
         env:
           ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          docker build -t "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" .
-          docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+          docker run -d --name smoke-test -p 8000:8000 "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+          echo "Waiting for the container to become healthy..."
+          READY=false
+          for _ in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /dev/null; then
+              READY=true
+              break
+            fi
+            sleep 2
+          done
+          if [ "$READY" != "true" ]; then
+            echo "::error::Container never became healthy"
+            docker logs smoke-test
+            exit 1
+          fi
+
+          RESPONSE=$(curl -sf -X POST http://localhost:8000/predict \
+            -H "Content-Type: application/json" \
+            -d '{"text": "Patient presents with acute chest pain and shortness of breath, elevated troponin levels observed"}')
+          echo "Response: $RESPONSE"
+
+          echo "$RESPONSE" | jq -e '
+            (.category | IN(
+              "cardiovascular diseases", "digestive system diseases",
+              "general pathological conditions", "neoplasms",
+              "nervous system diseases"
+            )) and
+            (.urgency | IN("normal", "attention", "urgent")) and
+            (.low_confidence | type == "boolean")
+          ' > /dev/null || {
+            echo "::error::/predict response failed schema validation: $RESPONSE"
+            docker logs smoke-test
+            exit 1
+          }
+
+          docker stop smoke-test
+
+      - name: Push image
+        env:
+          ECR_REGISTRY: ${{ steps.ecr-login.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: docker push "$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
 
       # Dockerrun.aws.json pins a specific image tag (we never push
       # `latest`), so redeploying means rewriting that tag and pushing a
@@ -112,6 +167,13 @@ jobs:
         run: |
           EB_BUCKET="elasticbeanstalk-${AWS_REGION}-${AWS_ACCOUNT_ID}"
           aws s3 cp Dockerrun.aws.json "s3://$EB_BUCKET/$VERSION_LABEL/Dockerrun.aws.json"
+
+          # Captured before deploying: if the new version fails its health
+          # check below, we roll back to this instead of leaving a broken
+          # version live -- see docs/technical-decisions.md.
+          PREVIOUS_VERSION=$(aws elasticbeanstalk describe-environments \
+            --environment-names "$EB_ENV_NAME" --query 'Environments[0].VersionLabel' --output text)
+          echo "Previously live version: $PREVIOUS_VERSION"
 
           # Idempotent: a version label collision only happens if a prior
           # run's create-application-version succeeded but a later step
@@ -150,7 +212,34 @@ jobs:
           HEALTH=$(aws elasticbeanstalk describe-environments \
             --environment-names "$EB_ENV_NAME" --query 'Environments[0].Health' --output text)
           echo "Final health: $HEALTH"
+
           if [ "$HEALTH" != "Green" ]; then
-            echo "::error::Beanstalk environment health is '$HEALTH' (expected Green) after deployment"
+            if [ -z "$PREVIOUS_VERSION" ] || [ "$PREVIOUS_VERSION" = "None" ]; then
+              echo "::error::Beanstalk environment health is '$HEALTH' (expected Green) after deployment -- no previous version to roll back to"
+              exit 1
+            fi
+
+            echo "::warning::Deploy of $VERSION_LABEL is unhealthy ($HEALTH) -- rolling back to $PREVIOUS_VERSION"
+            aws elasticbeanstalk update-environment \
+              --environment-name "$EB_ENV_NAME" \
+              --version-label "$PREVIOUS_VERSION"
+
+            echo "Waiting for rollback to finish..."
+            for _ in $(seq 1 30); do
+              STATUS=$(aws elasticbeanstalk describe-environments \
+                --environment-names "$EB_ENV_NAME" --query 'Environments[0].Status' --output text)
+              [ "$STATUS" = "Ready" ] && break
+              sleep 20
+            done
+
+            ROLLBACK_HEALTH=$(aws elasticbeanstalk describe-environments \
+              --environment-names "$EB_ENV_NAME" --query 'Environments[0].Health' --output text)
+            echo "Rollback health: $ROLLBACK_HEALTH"
+
+            if [ "$ROLLBACK_HEALTH" = "Green" ]; then
+              echo "::error::Deploy of $VERSION_LABEL failed health check ($HEALTH) -- automatically rolled back to $PREVIOUS_VERSION, which is healthy"
+            else
+              echo "::error::Deploy of $VERSION_LABEL failed health check ($HEALTH), AND the rollback to $PREVIOUS_VERSION is also unhealthy ($ROLLBACK_HEALTH) -- needs manual investigation"
+            fi
             exit 1
           fi
