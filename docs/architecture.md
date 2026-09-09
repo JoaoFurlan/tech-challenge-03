@@ -84,7 +84,7 @@ toward providing more detail. Same section for the full story.
 ## Repo structure
 
 ```
-tech-challenge-03-v1/
+tech-challenge-03/
 ├── .github/workflows/ci-cd.yml    # lint -> test -> build -> push to ECR (OIDC)
 ├── .github/workflows/deploy-monitoring.yml  # SSM redeploy of EC2 monitoring stack
 ├── app/                            # FastAPI service

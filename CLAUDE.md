@@ -58,8 +58,11 @@ the only exception is the original challenge PDF itself, which is source materia
 
 ## Repo / Git status
 
-Git repo initialized, pushed to `https://github.com/JoaoFurlan/tech-challenge-03-v1`
-(private). Commits so far: project context + course notes, architecture/decisions docs,
+Git repo initialized, pushed to `https://github.com/JoaoFurlan/tech-challenge-03`
+(private). Note: the local working directory here is still named
+`tech-challenge-03-v1` — kept as-is deliberately, since renaming it would
+orphan this session's Claude Code history/memory (which is keyed to the
+directory path). Commits so far: project context + course notes, architecture/decisions docs,
 English-language pass. A pre-push hook on this machine requires interactive confirmation
 (commit identity vs. authenticated `gh` account) — pushes need to be run by the user in
 their own terminal (`! git push origin main`), not through a tool call.
