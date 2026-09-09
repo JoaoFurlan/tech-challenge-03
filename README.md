@@ -202,6 +202,18 @@ de desquantização por chamada supera o ganho de compute. Ainda entrega uma
 economia real de tamanho (35% menor que FP32) se espaço em disco for mais
 relevante que latência. Raciocínio completo em `docs/technical-decisions.md`.
 
+**Números de latência são sensíveis à máquina onde rodam.** Reproduzindo
+esse benchmark numa máquina diferente, os tempos absolutos saíram ~2-3x mais
+lentos, e o ranking FP32 vs. INT8 chegou a se inverter (INT8 mais rápido no
+P50/P95 daquela vez). Isso não invalida o achado acima: a diferença original
+entre FP32 e INT8 já é pequena (0,028ms no P50) — menor que o ruído típico de
+uma medição sub-milissegundo (carga da máquina, virtualização, scheduling do
+SO). O que se mantém estável entre máquinas é a comparação de *qualidade*
+(F1-macro idêntico) e de *tamanho* (ONNX bem menor que o baseline), não o
+ranking exato de latência entre FP32 e INT8. Rode
+`optimization/export_and_benchmark.py` (passo 4 abaixo) na sua própria
+máquina para números representativos do seu ambiente.
+
 ## Estrutura do projeto
 
 ```
@@ -239,8 +251,16 @@ relevante que latência. Raciocínio completo em `docs/technical-decisions.md`.
 ## Como reproduzir tudo localmente
 
 **Pré-requisitos**: Python 3.11+, [`uv`](https://docs.astral.sh/uv/), Docker
-Desktop (com `buildx`), AWS CLI configurado (só necessário para puxar
-artefatos do DVC/S3).
+Desktop (com `buildx`). **Não é necessário ter credenciais AWS** — o bucket
+S3 do DVC (`dvc-store/`) é público para leitura (só leitura: ninguém de fora
+consegue escrever nele). Se você não tiver credenciais AWS configuradas,
+rode isto uma vez antes do passo 2 (grava só em `.dvc/config.local`, que é
+ignorado pelo git — não afeta o autor do projeto nem qualquer uso futuro com
+credenciais reais):
+
+```bash
+uv run --group training dvc remote modify --local medsys-remote allow_anonymous_login true
+```
 
 **Sobre os grupos e extras do `uv`.** O projeto usa dois mecanismos diferentes
 do `uv`, com propósitos distintos — vale entender a diferença antes de rodar
@@ -283,7 +303,8 @@ uv sync --group dev
 
 **2. Puxar dados e artefatos de modelo (DVC/S3)** — não estão no git, e esse
 passo é necessário nos dois caminhos abaixo (dados brutos para retreinar,
-artefatos de modelo já treinados para só rodar a API):
+artefatos de modelo já treinados para só rodar a API). Funciona sem
+credenciais AWS (ver nota nos Pré-requisitos acima):
 
 ```bash
 uv run --group training dvc pull
@@ -341,10 +362,15 @@ acima usam:
 uv run --group training mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
 
-Abre em http://localhost:5000 (padrão do MLflow), com os 4 experimentos
-listados separadamente (`model-selection`, `feature-engineering`,
-`hyperparameter-tuning`, `latency-optimization`) — cada run individual mostra
-os parâmetros testados e as métricas resultantes lado a lado.
+Abre em http://localhost:5000 (padrão do MLflow), com **5 experimentos**
+listados separadamente: `model-selection`, `feature-engineering` e
+`hyperparameter-tuning` (cada um com várias runs — uma por combinação
+testada no grid daquela etapa), `final-model` (uma única run: o pipeline
+vencedor das 3 etapas acima, retreinado no pool completo e avaliado uma
+única vez no teste — gerado por `training.train_final`, é o número oficial
+reportado no README/model-card) e `latency-optimization` (as runs de
+benchmark do passo seguinte). Cada run individual mostra os parâmetros
+testados e as métricas resultantes lado a lado.
 
 ### Rodar a stack completa de monitoramento (API + Prometheus + Grafana)
 
@@ -364,7 +390,13 @@ http://localhost:8000/predict -H "Content-Type: application/json" -d
 
 ### Rodar o frontend de demo (Streamlit)
 
-Apontado por padrão para `http://localhost:8000`:
+Apontado por padrão para `http://localhost:8000`. **Atenção**: `uv sync`
+sincroniza para bater exatamente com o que for pedido *naquela chamada* (ver
+"`uv sync` vs. `uv run`" acima) — se você já tinha sincronizado o grupo
+`training` (Caminho completo acima) e depois roda só `uv sync --extra
+frontend`, os ~100 pacotes de `training` são desinstalados, não é um bug. Se
+for testar tudo na mesma sessão, sincronize junto:
+`uv sync --group dev --group training --extra frontend`.
 
 ```bash
 uv sync --extra frontend
@@ -380,7 +412,11 @@ necessário ter rodado o Caminho completo antes para testar isso.
 
 Roda em Docker, não diretamente no host — o Airflow não roda nativamente no
 Windows (depende de uma API POSIX sem equivalente). É um ambiente separado do
-`docker-compose.yml` da raiz (orquestra retreino, não serve/observa a API):
+`docker-compose.yml` da raiz (orquestra retreino, não serve/observa a API).
+**Se houver mais de um checkout deste repositório nesta máquina**, passe um
+nome de projeto único (`docker compose -p <nome-unico> up --build -d`) — por
+padrão o Compose nomeia os recursos pela pasta (`airflow` nos dois casos), e
+sem isso um checkout pode substituir os containers do outro:
 
 ```bash
 cd airflow
