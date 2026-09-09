@@ -1,230 +1,229 @@
-# Model Card — Hospital Report Triage Classifier
+# Model Card — Classificador de Triagem de Laudos Médicos
 
-Following the structure proposed in Mitchell et al., *Model Cards for Model
-Reporting* (2019). Not required by the Tech Challenge — added because
-documenting a model this way is standard professional practice for anything
-touching clinical decisions, even at demo/academic scale. Quantitative
-sections are placeholders until the training pipeline runs; see
-`architecture.md` and `technical-decisions.md` for the full design rationale.
+Segue a estrutura proposta em Mitchell et al., *Model Cards for Model
+Reporting* (2019). Não exigido pelo Tech Challenge — incluído porque
+documentar um modelo assim é prática profissional padrão para qualquer coisa
+que toque decisões clínicas, mesmo em escala de demo/acadêmica. Ver
+`architecture.md` e `technical-decisions.md` para o raciocínio completo por
+trás de cada decisão de design.
 
-## Model Details
+## Detalhes do modelo
 
-- **Developed by:** solo project, Tech Challenge Fase 3 (POS Tech / MLET).
-- **Model date:** 2026-09.
-- **Model type:** text classifier — TF-IDF vectorizer (unigram,
+- **Desenvolvido por:** projeto solo, Tech Challenge Fase 3 (POS Tech / MLET).
+- **Data do modelo:** 2026-09.
+- **Tipo do modelo:** classificador de texto — vetorizador TF-IDF (unigrama,
   `max_features=10000`, `min_df=2`, `stop_words="english"`) + **Complement
-  Naive Bayes** (`alpha=0.5, norm=True`), chosen via the `model-selection`
-  MLflow experiment over Logistic Regression, LinearSVC, Multinomial NB,
-  and Random Forest — *not* the raw F1-macro leader (LinearSVC), chosen
-  instead for a substantially lower dangerous-miss rate, an explicit
-  documented safety-for-accuracy trade. Full reasoning in
+  Naive Bayes** (`alpha=0.5, norm=True`), escolhido no experimento MLflow
+  `model-selection` entre Regressão Logística, LinearSVC, Multinomial NB e
+  Random Forest — *não* o líder bruto de F1-macro (LinearSVC), escolhido em
+  vez disso por uma taxa de subtriagem substancialmente menor, uma troca
+  documentada e explícita de segurança por acurácia. Raciocínio completo em
   `technical-decisions.md`.
-- **What it predicts directly:** one of 5 disease categories (neoplasms,
-  cardiovascular diseases, nervous system diseases, digestive diseases,
-  general pathological conditions) from a medical report's free text.
-- **What it outputs after post-processing:** an urgency tier —
-  normal / attention / urgent — derived deterministically from the predicted
-  category plus a keyword adjustment over the report text (see
-  `architecture.md` § Urgency mapping). The urgency tier is **not** learned;
-  only the category prediction is a machine-learned output. As of the
-  domain-shift fixes below, the response also includes `low_confidence:
-  bool`, signaling when the category prediction has no real vocabulary
-  evidence behind it.
-- **Optimization:** exported to ONNX (FP32) — chosen over the sklearn
-  pipeline for a 4.4x P50 latency win at zero accuracy cost. INT8
-  quantization was tested and rejected: counterintuitively *slower* than
-  FP32 at this model's scale (dequantization overhead exceeds the compute
-  savings for a model this small) — a documented negative finding, not
-  assumed to help because the plan called for it. See
-  `technical-decisions.md` § Latency optimization.
-- **License / paper:** none published for this project; underlying dataset is
-  the Medical Abstracts TC Corpus (Kaggle /
+- **O que prevê diretamente:** uma de 5 categorias de doença (neoplasms,
+  doenças cardiovasculares, doenças do sistema nervoso, doenças digestivas,
+  condições patológicas gerais) a partir do texto livre de um laudo médico.
+- **O que retorna após pós-processamento:** um nível de urgência — normal /
+  atenção / urgente — derivado deterministicamente da categoria prevista mais
+  um ajuste por palavra-chave sobre o texto do laudo (ver `architecture.md`
+  § Mapeamento de urgência). O nível de urgência **não** é aprendido; só a
+  previsão de categoria é uma saída de machine learning. A resposta também
+  inclui `low_confidence: bool`, sinalizando quando a previsão de categoria
+  não tem evidência real de vocabulário por trás.
+- **Otimização:** exportado para ONNX (FP32) — escolhido sobre o pipeline
+  sklearn por um ganho de 4,4x em latência P50 sem custo de acurácia. A
+  quantização INT8 foi testada e rejeitada: contraintuitivamente mais *lenta*
+  que FP32 nessa escala de modelo — um achado negativo documentado. Ver
+  `technical-decisions.md` § Otimização de latência.
+- **Licença / artigo:** nenhum publicado para este projeto; o dataset
+  subjacente é o Medical Abstracts TC Corpus (Kaggle /
   `sebischair/Medical-Abstracts-TC-Corpus`).
 
-## Intended Use
+## Uso pretendido
 
-- **Primary intended use:** academic demonstration of an ML deployment
-  pipeline (CI/CD, orchestration, monitoring, latency optimization) for a
-  postgraduate tech challenge. The "hospital triage" framing is the exercise's
-  scenario, not a validated clinical deployment.
-- **Primary intended users:** the project author and course graders; secondary
-  audience is anyone reviewing the repo as a portfolio/reference piece.
-- **Out-of-scope uses:** **this model must not be used for real clinical
-  triage or any real patient-facing decision.** It is trained on a public
-  research abstract dataset, not on real hospital laudo intake text, has not
-  been clinically validated, and the urgency-mapping layer is a documented
-  heuristic (category baseline + keyword rule), not a clinically-derived
-  scoring system.
+- **Uso principal pretendido:** demonstração acadêmica de um pipeline de
+  deploy de ML (CI/CD, orquestração, monitoramento, otimização de latência)
+  para um desafio de pós-graduação. A ambientação de "triagem hospitalar" é o
+  cenário do exercício, não um deploy clínico validado.
+- **Usuários principais pretendidos:** o autor do projeto e os avaliadores do
+  curso; público secundário é quem revisar o repositório como peça de
+  portfólio/referência.
+- **Usos fora de escopo:** **este modelo não deve ser usado para triagem
+  clínica real ou qualquer decisão real voltada a paciente.** É treinado em
+  um dataset público de abstracts de pesquisa, não em texto real de admissão
+  hospitalar, não foi validado clinicamente, e a camada de mapeamento de
+  urgência é uma heurística documentada, não um sistema de pontuação
+  clinicamente derivado.
 
-## Factors
+## Fatores
 
-- **Relevant factors:** report length and vocabulary style (the dataset is
-  medical *abstracts* — condensed, technical academic writing — which may
-  differ systematically from how a real hospital laudo is phrased).
-- **Evaluation factors:** performance is evaluated per disease category
-  (5-way), not per urgency tier, since urgency has no ground truth in this
-  dataset — see § Metrics.
+- **Fatores relevantes:** tamanho e estilo de vocabulário do laudo (o
+  dataset é de *abstracts* médicos — escrita acadêmica condensada e técnica —
+  que pode diferir sistematicamente de como um laudo hospitalar real é
+  redigido).
+- **Fatores de avaliação:** o desempenho é avaliado por categoria de doença
+  (5 classes), não por nível de urgência, já que urgência não tem ground
+  truth neste dataset — ver § Métricas.
 
-## Metrics
+## Métricas
 
-- **Primary model-selection metric: F1-macro** across the 5 disease
-  categories — chosen specifically so a model can't win by only being good at
-  the largest category. See `technical-decisions.md` § Evaluation metrics for
-  the full reasoning.
-- **Reported alongside every model:** per-class precision/recall, confusion
-  matrix, accuracy (context only, not decisive).
-- **Clinically-motivated secondary check:** recall on the cardiovascular
-  category specifically (our "urgent" baseline) is confirmed explicitly after
-  the F1-macro winner is chosen — a false negative there is the costliest
-  failure mode, since it would silently fall through to a lower urgency tier
-  downstream.
-- **Latency metrics** (separate from classification quality): P50/P95/P99
-  response time over the full `/predict` pipeline, original model vs.
-  optimized (ONNX + quantization/pruning).
-- **Metrics considered and not used:** ROC-AUC, PR-AUC, Matthews Correlation
-  Coefficient — see `technical-decisions.md` for why.
+- **Métrica principal de seleção de modelo: F1-macro** entre as 5 categorias
+  de doença — escolhida especificamente para que um modelo não vença só por
+  ser bom na maior categoria. Raciocínio completo em `technical-decisions.md`
+  § Métricas de avaliação.
+- **Reportado junto de cada modelo:** precisão/recall por classe, matriz de
+  confusão, acurácia (só contexto, não decisiva).
+- **Checagem secundária motivada clinicamente:** o recall na categoria
+  cardiovascular (nossa baseline de "urgente") é confirmado explicitamente
+  depois de escolher o vencedor por F1-macro — um falso negativo ali é o modo
+  de falha mais custoso, já que cairia silenciosamente para um nível de
+  urgência mais baixo.
+- **Métricas de latência** (separadas da qualidade de classificação): tempo
+  de resposta P50/P95/P99 sobre todo o pipeline de `/predict`, modelo
+  original vs. otimizado.
+- **Métricas consideradas e não usadas:** ROC-AUC, PR-AUC, Coeficiente de
+  Correlação de Matthews — ver `technical-decisions.md` para o porquê.
 
-## Training Data
+## Dados de treino
 
-- **Source:** Medical Abstracts TC Corpus (Kaggle), 14,438 labeled records.
-- **Class distribution:**
+- **Fonte:** Medical Abstracts TC Corpus (Kaggle), 14.438 registros
+  rotulados.
+- **Distribuição de classes:**
 
-| Category | Count |
+| Categoria | Quantidade |
 |---|---|
-| General pathological conditions | 4,805 |
-| Neoplasms | 3,163 |
-| Cardiovascular diseases | 3,051 |
-| Nervous system diseases | 1,925 |
-| Digestive system diseases | 1,494 |
+| Condições patológicas gerais | 4.805 |
+| Neoplasms | 3.163 |
+| Doenças cardiovasculares | 3.051 |
+| Doenças do sistema nervoso | 1.925 |
+| Doenças digestivas | 1.494 |
 
-- **Preprocessing:** TF-IDF vectorization (configuration chosen via the
-  `feature-engineering` MLflow experiment); no external embeddings.
-- **Split:** ~80–85% used for cross-validated model-selection,
-  feature-engineering, and hyperparameter-tuning (Stratified K-Fold); ~15–20%
-  held out as a test set, untouched until final evaluation. Details in
-  `technical-decisions.md` § Train/validation/test split.
+- **Pré-processamento:** vetorização TF-IDF (configuração escolhida via o
+  experimento MLflow `feature-engineering`); sem embeddings externos.
+- **Split:** ~80–85% usado para seleção de modelo, engenharia de features e
+  tuning de hiperparâmetros com validação cruzada (Stratified K-Fold);
+  ~15–20% separado como conjunto de teste, intocado até a avaliação final.
+  Detalhes em `technical-decisions.md` § Split treino/validação/teste.
 
-## Evaluation Data
+## Dados de avaliação
 
-Same source distribution as training data — the held-out test set described
-above, drawn from the same Medical Abstracts TC Corpus via a single
-stratified split. No separate out-of-distribution evaluation set is used;
-this is a known limitation (see § Caveats).
+Mesma distribuição de origem dos dados de treino — o conjunto de teste
+descrito acima, extraído do mesmo Medical Abstracts TC Corpus via um único
+split estratificado. Nenhum conjunto de avaliação fora-de-distribuição
+separado é usado; essa é uma limitação conhecida (ver § Caveats).
 
-## Quantitative Analyses
+## Análises quantitativas
 
-Final pipeline (ComplementNB `alpha=0.5, norm=True` + TF-IDF as above),
-evaluated once on the 1,245-document held-out test set — see
-`architecture.md` and `technical-decisions.md` for the full staged-experiment
-process (model-selection → feature-engineering → hyperparameter-tuning) that
-led here, including every rejected alternative and why.
+Pipeline final (ComplementNB `alpha=0.5, norm=True` + TF-IDF conforme acima),
+avaliado uma única vez no conjunto de teste de 1.245 documentos — ver
+`architecture.md` e `technical-decisions.md` para o processo completo em
+etapas (seleção de modelo → engenharia de features → tuning de
+hiperparâmetros) que levou até aqui, incluindo cada alternativa rejeitada e
+por quê.
 
-| Metric | Value |
+| Métrica | Valor |
 |---|---|
-| F1-macro | 0.7786 |
-| Accuracy | 0.7880 |
-| Tier accuracy (urgency, not just category) | 0.8056 |
-| Undertriage rate (predicted tier below true tier — dangerous) | 0.0498 |
-| Overtriage rate (predicted tier above true tier — costly, not dangerous) | 0.1446 |
+| F1-macro | 0,7786 |
+| Acurácia | 0,7880 |
+| Acurácia de nível (urgência, não só categoria) | 0,8056 |
+| Taxa de subtriagem (nível previsto abaixo do real — perigoso) | 0,0498 |
+| Taxa de sobretriagem (nível previsto acima do real — custoso, não perigoso) | 0,1446 |
 
-Per-class (test set):
+Por classe (conjunto de teste):
 
-| Category | Recall | Precision |
+| Categoria | Recall | Precisão |
 |---|---|---|
-| Cardiovascular diseases | 0.939 | 0.758 |
-| Neoplasms | 0.927 | 0.831 |
-| Digestive system diseases | 0.781 | 0.788 |
-| Nervous system diseases | 0.709 | 0.747 |
-| General pathological conditions | 0.574 | 0.792 |
+| Doenças cardiovasculares | 0,939 | 0,758 |
+| Neoplasms | 0,927 | 0,831 |
+| Doenças digestivas | 0,781 | 0,788 |
+| Doenças do sistema nervoso | 0,709 | 0,747 |
+| Condições patológicas gerais | 0,574 | 0,792 |
 
-Cardiovascular recall (0.939) was the explicit clinically-motivated check
-from § Metrics — confirmed high, consistent with the safety-first model
-choice. General pathological conditions has the lowest recall (0.574) but
-the highest precision among the weaker classes (0.792) — consistent with
-ComplementNB's documented tilt away from confidently predicting the
-"normal"-mapped category unless the evidence is strong, the same mechanism
-that drove the model-selection choice.
+O recall de cardiovascular (0,939) foi a checagem clinicamente motivada
+explícita da § Métricas — confirmado alto, consistente com a escolha de
+modelo voltada à segurança. Condições patológicas gerais tem o menor recall
+(0,574) mas a maior precisão entre as classes mais fracas (0,792) —
+consistente com a inclinação documentada do ComplementNB de evitar prever
+com confiança a categoria mapeada para "normal" a menos que a evidência seja
+forte, o mesmo mecanismo que guiou a escolha na seleção de modelo.
 
-**Latency** (ONNX FP32 vs. sklearn baseline, single-document `/predict`,
-500-request benchmark):
+**Latência** (ONNX FP32 vs. baseline sklearn, `/predict` de documento único,
+benchmark de 500 requisições):
 
-| Variant | P50 | P95 | P99 | Size |
+| Variante | P50 | P95 | P99 | Tamanho |
 |---|---|---|---|---|
-| sklearn baseline | 0.595ms | 0.814ms | 1.040ms | 1,233KB |
-| ONNX FP32 (served) | 0.135ms | 0.263ms | 0.339ms | 413KB |
-| ONNX INT8 (tested, not served) | 0.163ms | 0.281ms | 0.397ms | 267KB |
+| Baseline sklearn | 0,595ms | 0,814ms | 1,040ms | 1.233KB |
+| ONNX FP32 (servido) | 0,135ms | 0,263ms | 0,339ms | 413KB |
+| ONNX INT8 (testado, não servido) | 0,163ms | 0,281ms | 0,397ms | 267KB |
 
-INT8 was slower than FP32, not faster — see `technical-decisions.md` § Latency
-optimization for why, and § Model Details above.
+INT8 foi mais lento que FP32, não mais rápido — ver `technical-decisions.md`
+§ Otimização de latência para o porquê.
 
-## Ethical Considerations
+## Considerações éticas
 
-- **Not a validated medical device.** No clinical, regulatory, or
-  human-subjects review has been performed. Explicitly not for real triage
-  use — see § Intended Use.
-- **Urgency labels are a documented heuristic, not ground truth.** The
-  category→urgency baseline table and the escalate/de-escalate keyword lists
-  (`architecture.md` § Urgency mapping) were designed by the project author
-  based on general clinical reasoning, not derived from labeled urgency data
-  or reviewed by a clinician. They should be read as a transparent, auditable
-  business rule — intentionally simple and inspectable — not as a validated
-  triage protocol.
-- **Failure mode of highest concern:** a report from a genuinely urgent
-  category (cardiovascular) misclassified into a lower-urgency category would
-  silently under-triage. This is why confusion-matrix review and
-  cardiovascular recall are treated as required checks, not optional
-  diagnostics, throughout the modeling pipeline.
-- **Data provenance:** the training data is published medical *abstracts*
-  (research/academic text), not real patient intake records — no PII/PHI is
-  involved, but this also means the text style may not transfer cleanly to
-  real hospital laudo language (see § Caveats).
+- **Não é um dispositivo médico validado.** Nenhuma revisão clínica,
+  regulatória ou com seres humanos foi realizada. Explicitamente não é para
+  uso real em triagem — ver § Uso pretendido.
+- **Os níveis de urgência são uma heurística documentada, não ground truth.**
+  A tabela de nível base por categoria e as listas de palavras-chave de
+  escalada/de-escalada (`architecture.md` § Mapeamento de urgência) foram
+  desenhadas pelo autor do projeto com base em raciocínio clínico geral, não
+  derivadas de dado real de urgência nem revisadas por um clínico. Devem ser
+  lidas como uma regra de negócio transparente e auditável — deliberadamente
+  simples e inspecionável — não como um protocolo de triagem validado.
+- **Modo de falha de maior preocupação:** um laudo de uma categoria
+  genuinamente urgente (cardiovascular) classificado erroneamente em uma
+  categoria de urgência menor causaria subtriagem silenciosa. É por isso que
+  a revisão da matriz de confusão e o recall de cardiovascular são tratados
+  como checagens obrigatórias, não diagnósticos opcionais, ao longo de todo o
+  pipeline de modelagem.
+- **Origem do dado:** o dado de treino são *abstracts* médicos publicados
+  (texto de pesquisa/acadêmico), não registros reais de admissão de paciente
+  — não há PII/PHI envolvido, mas isso também significa que o estilo do texto
+  pode não transferir bem para a linguagem real de um laudo hospitalar (ver
+  § Caveats).
 
-## Caveats and Recommendations
+## Caveats e recomendações
 
-- **Domain shift risk — confirmed via real-world testing, not just
-  theoretical.** Medical abstracts (condensed, third-person, academic
-  register) read differently than real triage phrasing (short, informal,
-  clinical-shorthand). Post-deployment manual testing confirmed this
-  concretely: "Unresponsive, no detectable pulse, non-breathing" — a
-  textbook cardiac-arrest description — was classified `normal`. The
-  words are individually in the training vocabulary, but the model never
-  learned to associate this *register* with urgency, because it was never
-  shown text written that way. **This is not fixable by adding more of
-  the existing training data** — the Medical Abstracts TC Corpus is the
-  only data source available, and more abstracts would only improve
-  performance on abstract-style text, not teach the model a register it's
-  never seen. A real fix needs training examples in that different
-  register (real or realistically synthesized triage notes), which is a
-  genuine scope increase, not a quick follow-up. Full investigation,
-  including three other concrete misclassification examples and the two
-  bugs it did surface and get fixed (a keyword-adjustment cap, and a
-  missing low-confidence signal for near-empty-vocabulary inputs), in
-  `technical-decisions.md` § Real-world testing surfaced a genuine
-  domain-shift limitation.
-- **Low-confidence inputs are now flagged, not silently trusted.** As of
-  the fix above, `/predict` returns `low_confidence: true` when the input
-  shares no vocabulary with the training data at all (e.g. very short or
-  colloquial text) — the category prediction is then driven by the
-  classifier's structural bias, not real evidence. Urgency is **fixed to
-  `attention`** in that case (not merely floored) — a raw `urgent` guess
-  is exactly as ungrounded as `normal` when there's no real evidence
-  behind it, so neither extreme is trusted; a `message` field is also
-  returned, guiding the caller to provide more detail. This narrows one
-  failure mode (zero-signal inputs) but does not address the broader
-  register-mismatch risk above (in-vocabulary text in an unfamiliar
-  register still gets a confident-looking, potentially wrong answer).
-- **No drift monitoring implemented.** In a real deployment, input
-  distribution drift and concept drift (see `course-notes/monitoring-
-  services.md`) would need active monitoring; this project's monitoring
-  stack (Prometheus/Grafana) covers operational metrics (request count,
-  latency, error rate) only, not model-quality drift.
-- **Single held-out test set.** Results reflect one stratified split; no
-  repeated/bootstrapped test-set estimates are computed, so reported test
-  metrics carry some sampling variance not captured by a single point
-  estimate.
-- **Recommendation for any future real-world adaptation:** replace the
-  training data with real (de-identified) hospital laudo text, have the
-  urgency-mapping rule reviewed and validated by a clinician rather than
-  relying on the author's heuristic, and add the drift-monitoring and
-  human-in-the-loop review practices referenced in `course-notes/training-
-  pipeline.md` before considering any real clinical use.
+- **Risco de mudança de domínio — confirmado via teste no mundo real, não só
+  teórico.** Abstracts médicos (registro condensado, em terceira pessoa,
+  acadêmico) se lêem de forma diferente da fala real de triagem (curta,
+  informal, jargão clínico). Testes manuais pós-deploy confirmaram isso
+  concretamente: "Unresponsive, no detectable pulse, non-breathing" — uma
+  descrição clássica de parada cardíaca — foi classificado como `normal`. As
+  palavras estão individualmente no vocabulário de treino, mas o modelo nunca
+  aprendeu a associar esse *registro* à urgência, porque nunca viu texto
+  escrito dessa forma. **Isso não é corrigível adicionando mais dados do
+  mesmo tipo de treino** — o Medical Abstracts TC Corpus é a única fonte de
+  dado disponível, e mais abstracts só melhorariam o desempenho em texto
+  estilo abstract, não ensinariam um registro nunca visto. Uma correção real
+  precisa de exemplos de treino nesse registro diferente (notas de triagem
+  reais ou realisticamente sintetizadas), o que é um aumento genuíno de
+  escopo, não um follow-up rápido. Investigação completa, incluindo três
+  outros exemplos concretos de erro de classificação e os dois bugs que essa
+  investigação revelou e corrigiu, em `technical-decisions.md` § Teste no
+  mundo real revelou uma limitação genuína de mudança de domínio.
+- **Entradas de baixa confiança agora são sinalizadas, não silenciosamente
+  confiadas.** Com a correção acima, `/predict` retorna `low_confidence:
+  true` quando a entrada não compartilha nenhum vocabulário com os dados de
+  treino (ex.: texto muito curto ou coloquial) — a previsão de categoria é
+  então guiada pelo viés estrutural do classificador, não por evidência
+  real. A urgência é **fixada em `attention`** nesse caso (não só elevada) —
+  um palpite bruto de `urgente` é exatamente tão infundado quanto `normal`
+  quando não há evidência real por trás, então nenhum dos extremos é
+  confiado; um campo `message` também é retornado, orientando quem chamou a
+  API a fornecer mais detalhe. Isso reduz um modo de falha (entradas de sinal
+  zero) mas não resolve o risco mais amplo de descompasso de registro acima.
+- **Nenhum monitoramento de drift implementado.** Em um deploy real, deriva
+  de distribuição de entrada e deriva de conceito precisariam de
+  monitoramento ativo; a stack de monitoramento deste projeto
+  (Prometheus/Grafana) cobre só métricas operacionais (contagem de
+  requisições, latência, taxa de erro), não deriva de qualidade do modelo.
+- **Um único conjunto de teste separado.** Os resultados refletem um único
+  split estratificado; nenhuma estimativa repetida/bootstrapped do conjunto
+  de teste é calculada, então as métricas reportadas carregam alguma
+  variância amostral não capturada por uma única estimativa pontual.
+- **Recomendação para qualquer adaptação futura ao mundo real:** substituir
+  o dado de treino por texto real (desidentificado) de laudo hospitalar, ter
+  a regra de mapeamento de urgência revisada e validada por um clínico em vez
+  de depender da heurística do autor, e adicionar monitoramento de drift e
+  revisão humana no loop antes de considerar qualquer uso clínico real.

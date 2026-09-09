@@ -1,723 +1,350 @@
-# Technical Decisions
+# Decisões Técnicas
 
-Record of the decisions made for the Tech Challenge Fase 3 project and the
-reasoning behind each one — especially where we chose a simpler version than
-"the ideal" production setup, and why. Complements `architecture.md` (which
-describes the *what*; this document focuses on the *why*).
+Registro das decisões tomadas no projeto do Tech Challenge Fase 3 e o
+raciocínio por trás de cada uma — especialmente onde optamos por uma versão
+mais simples do que "o ideal" em produção, e por quê. Complementa
+`architecture.md` (que descreve o *quê*; este documento foca no *porquê*).
 
-## Dataset and urgency labeling
+## Dataset e mapeamento de urgência
 
-**Choice:** Medical Abstracts TC Corpus (Kaggle), 14,438 labeled reports across
-5 disease categories (neoplasms, cardiovascular diseases, nervous system
-diseases, digestive diseases, general pathological conditions).
+**Escolha:** Medical Abstracts TC Corpus (Kaggle), 14.438 laudos rotulados em
+5 categorias de doença (neoplasms, doenças cardiovasculares, doenças do
+sistema nervoso, doenças digestivas, condições patológicas gerais).
 
-**The problem:** the dataset has no real urgency labels (normal/attention/
-urgent) — only disease categories. Training directly against synthetic urgency
-labels (invented by us) would be scientifically fragile: evaluation metrics
-would measure how well the model learned our own heuristic, not real urgency.
+**O problema:** o dataset não tem rótulos reais de urgência (normal/atenção/
+urgente) — só categorias de doença. Treinar diretamente contra rótulos de
+urgência sintéticos (inventados por nós) seria cientificamente frágil: as
+métricas de avaliação mediriam o quão bem o modelo aprendeu nossa própria
+heurística, não a urgência real.
 
-**Decision:** train the classifier on the 5 real categories (genuine ground
-truth) and apply a deterministic category→urgency mapping layer on top of the
-prediction, adjusted by keywords present in the report's own text. This keeps
-model evaluation honest (metrics against real labels) and documents the
-urgency logic as an explicit, auditable business rule rather than something
-"learned" opaquely.
+**Decisão:** treinar o classificador nas 5 categorias reais (ground truth
+genuíno) e aplicar por cima uma camada determinística de mapeamento
+categoria→urgência, ajustada por palavras-chave presentes no próprio texto do
+laudo. Isso mantém a avaliação do modelo honesta (métricas contra rótulos
+reais) e documenta a lógica de urgência como uma regra de negócio explícita e
+auditável, em vez de algo "aprendido" de forma opaca.
 
-**Trade-off accepted:** final triage quality depends on both the category
-classifier's accuracy and the mapping rule's quality — an error in either part
-can produce an incorrect urgency. That's why the confusion matrix is treated
-as a required artifact in every experiment: a cardiovascular report
-misclassified as "general pathological condition," for example, would
-silently fall through to "normal" downstream — this is the system's most
-dangerous failure mode, and it's what the confusion matrix exists to catch.
+**Trade-off aceito:** a qualidade final da triagem depende tanto da acurácia
+do classificador de categoria quanto da qualidade da regra de mapeamento — um
+erro em qualquer uma das partes pode gerar uma urgência incorreta. Por isso a
+matriz de confusão é tratada como artefato obrigatório em todo experimento: um
+laudo cardiovascular classificado erroneamente como "condição patológica
+geral", por exemplo, cairia silenciosamente para "normal" no mapeamento —
+esse é o modo de falha mais perigoso do sistema, e é o que a matriz de
+confusão existe para pegar.
 
-## Re-splitting the dataset and dropping ambiguous labels
+## Novo split do dataset e remoção de rótulos ambíguos
 
-**The problem:** Kaggle ships this corpus pre-split into train (11,550 rows)
-and test (2,888 rows). Combining them to build our own split (rather than
-using the shipped one — see split rationale below) surfaced two data-quality
-issues invisible from either file alone:
+**O problema:** o Kaggle entrega esse corpus já dividido em train (11.550
+linhas) e test (2.888 linhas). Combinar os dois para montar nosso próprio
+split (em vez de usar o que veio pronto) revelou dois problemas de qualidade
+de dado invisíveis em cada arquivo isoladamente:
 
-1. **988 abstracts appear in both the original train and test files.** A
-   model trained on the shipped train split and evaluated on the shipped test
-   split could have been partly scoring on memorized examples — the official
-   split has train/test leakage built in.
-2. **2,929 abstracts appear more than once with *conflicting* category
-   labels** — same document text, different `condition_label`. Critically,
-   *zero* duplicate groups repeat with a matching label: every single
-   duplicate is a genuine conflict. Inspecting examples confirmed why:
-   "general pathological conditions" is involved in the large majority of
-   conflicting pairs (e.g. `cardiovascular diseases` + `general pathological
-   conditions`, 738 pairs), consistent with the source corpus having
-   originally multi-labeled some documents (a case report can plausibly span
-   a specific disease system *and* the generic bucket), which this
-   single-label Kaggle release exploded into separate rows — one per label —
-   rather than preserving as multi-label.
+1. **988 abstracts aparecem em ambos os arquivos**, original de train e de
+   test — o split oficial tem vazamento train/test embutido.
+2. **2.929 abstracts aparecem mais de uma vez com rótulos de categoria
+   conflitantes** — mesmo texto, categoria diferente. Nenhum grupo duplicado
+   repete com rótulo igual: toda duplicata é um conflito genuíno.
+   "Condições patológicas gerais" está envolvida na grande maioria dos pares
+   conflitantes (ex.: `cardiovascular diseases` + `general pathological
+   conditions`, 738 pares), consistente com o corpus original tendo
+   multi-rotulado alguns documentos, o que essa versão do Kaggle explodiu em
+   linhas separadas de rótulo único.
 
-**Why this matters beyond data hygiene:** it collides directly with the
-urgency-mapping design. "General pathological conditions" maps to baseline
-**normal**; several of its most common conflict partners
-(`cardiovascular diseases`) map to **urgent**. Whichever label got kept for
-an ambiguous document would silently decide its urgency tier — arbitrarily.
+**Por que isso importa além de higiene de dado:** colide diretamente com o
+desenho do mapeamento de urgência. "Condições patológicas gerais" mapeia para
+**normal**; vários de seus parceiros de conflito mais comuns (`cardiovascular
+diseases`) mapeiam para **urgente**. Qual rótulo fosse mantido para um
+documento ambíguo decidiria silenciosamente sua urgência — de forma
+arbitrária.
 
-**Decision:** combine train+test, then **drop all 2,929 ambiguous documents
-entirely** rather than keeping one label per document. Considered and
-rejected: (a) keeping the first-occurring row — simplest, preserves the full
-11,227-document count, but the kept label is incidental to Kaggle's row
-order, effectively injecting label noise into ~26% of the corpus with no
-principled justification; (b) a safety-biased tiebreak resolving conflicts
-toward whichever label maps to the higher urgency tier — ties the cleanup
-decision to the triage-safety narrative used elsewhere in this document, but
-adds a bespoke rule that's harder to justify as *data cleaning* rather than
-*model behavior in disguise*. Dropping ambiguous documents outright keeps
-every remaining label unambiguous ground truth, is the easiest of the three
-to explain and defend, and still leaves 8,298 documents — comfortably above
-the challenge's 2,000-sample floor — with class balance essentially
-unchanged (~3.4x vs. the original ~3.2x). The held-out test set is then
-carved from this clean pool with a fixed `random_state`, per the
-train/validation/test split decision below.
+**Decisão:** combinar train+test e **descartar por completo os 2.929
+documentos ambíguos**, em vez de manter um rótulo por documento. Considerado e
+rejeitado: manter a primeira linha ocorrida (mais simples, mas o rótulo
+mantido seria incidental à ordem das linhas do Kaggle) e um desempate
+enviesado para segurança (amarra a limpeza de dado a comportamento de modelo
+disfarçado). Descartar os ambíguos por completo mantém todo rótulo
+remanescente como ground truth inequívoco e ainda deixa **8.298 documentos** —
+folgadamente acima do piso de 2.000 exigido pelo desafio — com o
+desbalanceamento de classes praticamente inalterado (~3,4x vs. ~3,2x
+original). O conjunto de teste é então separado desse pool limpo com
+`random_state` fixo.
 
-## Candidate models
+## Modelos candidatos
 
-**Choice:** Logistic Regression, LinearSVC, Multinomial Naive Bayes, Complement
-Naive Bayes, and Random Forest, all with `class_weight="balanced"` where
-supported.
+**Escolha:** Regressão Logística, LinearSVC, Multinomial Naive Bayes,
+Complement Naive Bayes e Random Forest, todos com `class_weight="balanced"`
+onde suportado.
 
-**Why not just Random Forest** (the challenge PDF's literal suggestion): for
-high-dimensional, sparse TF-IDF text, linear models tend to perform better and
-more predictably than tree ensembles — and export more cleanly to ONNX. Random
-Forest still enters the comparison though: testing it empirically and showing
-why (or whether) it loses to the linear models is a stronger narrative than
-dismissing it without evidence.
+**Por que não só Random Forest** (sugestão literal do PDF do desafio): para
+texto TF-IDF esparso e de alta dimensionalidade, modelos lineares tendem a
+performar melhor e de forma mais previsível que ensembles de árvore — e
+exportam mais limpo para ONNX. Random Forest ainda entra na comparação:
+testá-lo e mostrar por que ele perde (ou não) para os modelos lineares é uma
+narrativa mais forte do que descartá-lo sem evidência.
 
-**Why not embeddings (Word2Vec/BERT/ClinicalBERT):** the challenge itself asks
-for a "lightweight NLP model" — embeddings/transformers would work against
-that requirement and against the latency-optimization story we built around a
-small linear model. Considered and deliberately rejected, not overlooked.
+**Por que não embeddings (Word2Vec/BERT/ClinicalBERT):** o próprio desafio
+pede um "modelo leve de NLP" — embeddings/transformers iriam contra esse
+requisito e contra a história de otimização de latência construída em torno
+de um modelo linear pequeno. Considerado e deliberadamente rejeitado, não
+esquecido.
 
-## Model selection: simplified feature engineering first
+## Seleção de modelo: engenharia de features simplificada primeiro
 
-**Decision:** rather than searching for the optimal TF-IDF configuration per
-model (a full, expensive search across all 5 candidates), we test only 2
-representative configurations ("conservative" and "rich") across all 5 models
-in the model-selection stage. The full feature search (36 combinations) runs
-afterward, only on the winning model.
+**Decisão:** em vez de buscar a configuração ideal de TF-IDF por modelo (uma
+busca completa e cara nos 5 candidatos), testamos apenas 2 configurações
+representativas ("conservadora" e "rica") nos 5 modelos na etapa de seleção
+de modelo. A busca completa de features (36 combinações) roda depois, só no
+modelo vencedor.
 
-**Why this is acceptable:** it's a pragmatic simplification of an already
-standard industry practice — "model bake-off" / "spot-checking algorithms":
-screen candidates cheaply first, invest heavy tuning effort only in the
-winner. The fully automated version of this (AutoML, joint Bayesian search
-over model+features+hyperparameters) would need more infrastructure than two
-weeks allows, and — more importantly — a joint automated search produces a
-far less explainable story for the README/video than a pipeline with clear,
-staged decisions. We chose interpretability over marginal additional rigor
-here, deliberately, not as a hidden limitation.
+**Por que isso é aceitável:** é uma simplificação pragmática de uma prática
+já padrão na indústria — "bake-off de modelos": filtrar candidatos de forma
+barata primeiro, investir tuning pesado só no vencedor. A versão totalmente
+automatizada disso (AutoML, busca conjunta sobre modelo+features+
+hiperparâmetros) precisaria de mais infraestrutura do que o prazo permite — e,
+mais importante, produziria uma história bem menos explicável para o
+README/vídeo do que um pipeline com decisões claras e em etapas.
+Interpretabilidade escolhida em vez de rigor marginal adicional,
+deliberadamente.
 
-## Evaluation metrics
+## Métricas de avaliação
 
-**Decision metric: F1-macro.** Unweighted mean across the 5 classes — a model
-can't win purely by being good at the majority class ("general pathological
-condition," 4,805 samples).
+**Métrica de decisão: F1-macro.** Média não ponderada entre as 5 classes — um
+modelo não pode vencer só por ser bom na classe majoritária ("condição
+patológica geral", 4.805 amostras).
 
-**Why not accuracy alone:** with moderate class imbalance (~3.2x between the
-largest and smallest class), accuracy can be misleading — reported for
-context, never as the deciding criterion.
+**Por que não só acurácia:** com desbalanceamento moderado de classes (~3,2x
+entre a maior e a menor classe), a acurácia pode enganar — reportada como
+contexto, nunca como critério de decisão.
 
-**Why cardiovascular recall is checked separately:** the cardiovascular
-category is our baseline for "urgent." A false negative here (a
-cardiovascular report misclassified) carries a higher clinical cost than a
-false positive. So after picking the F1-macro winner, we explicitly confirm
-cardiovascular recall wasn't sacrificed — a deliberate two-step check, more
-transparent than trying to bake that clinical weighting into a single
-automatic composite metric.
+**Por que o recall de cardiovascular é checado à parte:** cardiovascular é
+nossa baseline de "urgente". Um falso negativo aqui tem custo clínico maior
+que um falso positivo. Depois de escolher o vencedor por F1-macro,
+confirmamos explicitamente que o recall de cardiovascular não foi
+sacrificado — uma checagem deliberada em duas etapas, mais transparente do
+que embutir essa ponderação clínica em uma única métrica composta.
 
-**Why not ROC-AUC/PR-AUC/MCC:** for a multi-class problem, ROC-AUC requires
-extra decisions (One-vs-Rest, macro/weighted averaging) and `predict_proba`,
-which LinearSVC doesn't have natively, requiring extra `CalibratedClassifierCV`
-just for that one candidate. F1-macro + per-class recall + confusion matrix
-already cover the same ground with less added complexity. Considered and
-consciously dropped, not overlooked — discussed and weighed explicitly before
-the final call.
+**Por que não ROC-AUC/PR-AUC/MCC:** em um problema multiclasse, ROC-AUC exige
+decisões extras (One-vs-Rest, média macro/ponderada) e `predict_proba`, que o
+LinearSVC não tem nativamente. F1-macro + recall por classe + matriz de
+confusão já cobrem o mesmo terreno com menos complexidade. Considerado e
+conscientemente descartado.
 
-**Amendment: urgency-tier metrics added, and used as co-decisive.** Running
-model-selection surfaced a structural problem with F1-macro for this
-specific system: 3 of the 5 categories (neoplasms, nervous, digestive) map
-to the *same* urgency tier ("attention"). F1-macro penalizes confusing those
-three exactly as much as a genuinely dangerous error (e.g. cardiovascular →
-general, a 2-tier drop to "normal"), even though the former has **zero**
-effect on the actual triage output. `training/urgency.py` maps each
-category to its baseline tier; `training/model_selection.py` now also logs
-`tier_accuracy`, `undertriage_rate` (predicted tier < true tier — the
-dangerous direction), and `overtriage_rate` (predicted tier > true tier —
-costly but safe) for every run, evaluated against the pool via the same
-Stratified K-Fold used for F1-macro. Per the cardiovascular-recall check
-already established above, we'd already committed to not treating F1-macro
-as the sole criterion — this generalizes that same principle across all
-categories via the tier mapping instead of singling out one category.
+**Emenda: métricas de nível de urgência adicionadas, e usadas como
+co-decisivas.** A seleção de modelo revelou um problema estrutural do
+F1-macro para este sistema: 3 das 5 categorias (neoplasms, nervous, digestive)
+mapeiam para o **mesmo** nível de urgência ("atenção"). O F1-macro penaliza
+confundir essas três exatamente como penalizaria um erro genuinamente
+perigoso (cardiovascular → geral, queda de 2 níveis), mesmo que o primeiro
+caso não afete a triagem real. `training/model_selection.py` agora também
+loga `tier_accuracy`, `undertriage_rate` (nível previsto < real — a direção
+perigosa) e `overtriage_rate` (nível previsto > real — custoso, mas seguro).
 
-**Model-selection result: ComplementNB (conservative TF-IDF) chosen over
-the F1-macro leader.** LinearSVC/rich had the top F1-macro (0.798), but its
-margin over LogisticRegression/rich (0.793) was smaller than either model's
-fold-to-fold standard deviation (~0.009–0.013) — statistically a tie, not a
-real difference. ComplementNB/conservative trailed on F1-macro (0.765, a
-real ~3-point gap) but had a substantially lower `undertriage_rate` (0.053
-vs. 0.089 for LinearSVC/rich — a ~40% relative reduction). Checked the
-mechanism before trusting the number: ComplementNB's cardiovascular recall
-(0.933) well exceeds its precision (0.774), and its general-pathological
-precision (0.783) well exceeds its recall (0.562) — a consistent, genuine
-directional tilt away from the "normal" tier when uncertain, not
-indiscriminate over-prediction (precision stays reasonable across the
-board). This is expected behavior for Complement Naive Bayes specifically:
-unlike standard Multinomial NB (which estimates each class's word
-probabilities from only that class's own data and is known to bias toward
-majority classes on imbalanced datasets — visible here in its collapsed
-digestive/nervous recall, 0.18–0.39), ComplementNB estimates each class's
-parameters from every *other* class's data, which structurally counteracts
-that imbalance bias — matching our moderately imbalanced dataset
-(~3.4x). **Trade-off accepted, not hidden:** ComplementNB's total
-tier-error rate is actually slightly higher than LinearSVC/rich's (19.8% vs.
-17.4%) — it doesn't reduce mistakes overall, it redistributes them toward
-the safe direction (`overtriage_rate` 0.145 vs. 0.085). For a hospital
-triage system, more false alarms are an acceptable operational cost in
-exchange for meaningfully fewer dangerous misses; this is a deliberate
-safety-for-accuracy trade, documented as exactly that rather than presented
-as a strictly better model.
+**Resultado da seleção de modelo: ComplementNB (TF-IDF conservador) escolhido
+em vez do líder de F1-macro.** LinearSVC/rico teve o melhor F1-macro (0,798),
+mas sua margem sobre LogisticRegression/rico (0,793) foi menor que o desvio
+padrão fold-a-fold de ambos (~0,009–0,013) — estatisticamente um empate.
+ComplementNB/conservador ficou atrás em F1-macro (0,765, diferença real de
+~3 pontos) mas teve `undertriage_rate` substancialmente menor (0,053 vs.
+0,089 do LinearSVC/rico — redução relativa de ~40%). Verificamos o mecanismo
+antes de confiar no número: o recall de cardiovascular do ComplementNB
+(0,933) supera bastante sua precisão (0,774), e sua precisão em condições
+patológicas gerais (0,783) supera bastante seu recall (0,562) — uma
+inclinação consistente para longe do nível "normal" quando incerto, não
+superprevisão indiscriminada. Comportamento esperado do Complement Naive
+Bayes: diferente do Multinomial NB (que estima probabilidades por classe só
+com os dados daquela classe e tende a enviesar para classes majoritárias —
+visível aqui no recall baixo de digestive/nervous, 0,18–0,39), o ComplementNB
+estima os parâmetros de cada classe a partir de todas as *outras* classes, o
+que contrapõe estruturalmente esse viés. **Trade-off aceito, não escondido:**
+a taxa total de erro de nível do ComplementNB é na verdade um pouco maior que
+a do LinearSVC/rico (19,8% vs. 17,4%) — ele não reduz os erros no total,
+redistribui-os para a direção segura (`overtriage_rate` 0,145 vs. 0,085).
+Para um sistema de triagem hospitalar, mais falsos alarmes são um custo
+operacional aceitável em troca de significativamente menos erros perigosos —
+uma troca deliberada de segurança por acurácia, documentada como exatamente
+isso.
 
-## Feature-engineering result: unigram-only, confirmed not just assumed
+## Resultado da engenharia de features: só unigramas, confirmado
 
-**36-combination grid** (`ngram_range` x `max_features` x `min_df` x
-`sublinear_tf`) with ComplementNB fixed as the model surfaced the same
-F1-macro-vs-undertriage tension as model-selection, one level down: the
-F1-macro-best config (`ngram_range=(1,2)`, `max_features=20000`,
-`min_df=1`, `sublinear_tf=False`, F1=0.782) has `undertriage_rate=0.066`,
-meaningfully worse than the unigram-only region (`ngram_range=(1,1)`,
-undertriage clustered at 0.052-0.058 across the whole sub-grid — a
-consistent ~20% relative gap, not a cherry-picked pair). Bigrams improve
-the model's ability to positively identify "general pathological
-conditions" (recall climbs from ~0.54-0.59 to ~0.60-0.64), which is
-exactly the safety-favorable reluctance that made ComplementNB attractive
-in model-selection — bigrams erode it. Kept unigram-only
-(`ngram_range=(1,1)`) for the same safety-first reasoning already applied
-to the model choice.
+**Grid de 36 combinações** (`ngram_range` x `max_features` x `min_df` x
+`sublinear_tf`) com ComplementNB fixo revelou a mesma tensão
+F1-macro-vs-undertriage da seleção de modelo, um nível abaixo: a config de
+melhor F1-macro (`ngram_range=(1,2)`, `max_features=20000`, `min_df=1`,
+`sublinear_tf=False`, F1=0,782) tem `undertriage_rate=0,066`, pior que a
+região só-unigrama (undertriage entre 0,052-0,058 em todo o sub-grid — uma
+diferença consistente, não um par escolhido a dedo). Bigramas melhoram o
+recall de "condições patológicas gerais" (de ~0,54-0,59 para ~0,60-0,64), que
+é exatamente a relutância favorável à segurança que tornou o ComplementNB
+atraente na seleção de modelo — bigramas corroem isso. Mantivemos só
+unigramas (`ngram_range=(1,1)`) pelo mesmo raciocínio de segurança.
 
-**Follow-up sweep** (`max_df` in {1.0, 0.7, 0.5} x `stop_words` in
-{"english", None}, anchored on `max_features=10000, min_df=2,
-sublinear_tf=False`): `max_df` had no measurable effect at any tested
-value (F1-macro and undertriage_rate both flat to within 0.0001/0) — no
-single unigram term is common enough across this corpus to matter once
-English stop words are already removed, so `max_df` isn't a useful lever
-here and wasn't added as a permanent config knob. `stop_words="english"`
-beat `stop_words=None` consistently across every `max_df` value tested,
-both on F1-macro and on undertriage_rate (0.052-0.053 vs. 0.055-0.055) —
-digestive and nervous recall (2 of the 3 "attention"-tier categories) both
-drop without stop-word removal, and that recall loss is what drives the
-extra undertriage. This confirms a choice we'd already made by default
-(`stop_words="english"` was fixed throughout model-selection) with actual
-evidence, rather than leaving it untested.
+**Sweep complementar** (`max_df`, `stop_words`): `max_df` não teve efeito
+mensurável em nenhum valor testado. `stop_words="english"` bateu
+`stop_words=None` de forma consistente, tanto em F1-macro quanto em
+undertriage_rate (0,052-0,053 vs. 0,055-0,055) — recall de digestive e
+nervous caem sem remoção de stop words, e essa perda é o que impulsiona o
+undertriage extra. Confirma com evidência real uma escolha que já vínhamos
+fazendo por padrão.
 
-**Final TF-IDF config**: `ngram_range=(1,1)`, `max_features=10000`,
-`min_df=2`, `sublinear_tf=False`, `stop_words="english"` — F1-macro 0.773,
-undertriage_rate 0.0525. Essentially unchanged from the original
-"conservative" config used in model-selection (F1=0.765,
-undertriage=0.0526); the grid search mostly *confirmed* that starting
-point was already close to the safety frontier, while explaining why
-(unigram-only is what matters, and the conservative config was already
-there).
+**Config final de TF-IDF**: `ngram_range=(1,1)`, `max_features=10000`,
+`min_df=2`, `sublinear_tf=False`, `stop_words="english"` — F1-macro 0,773,
+undertriage_rate 0,0525. Essencialmente igual à config "conservadora"
+original usada na seleção de modelo — o grid search principalmente
+*confirmou* que o ponto de partida já estava perto da fronteira de segurança.
 
-## Hyperparameter-tuning result and an MLflow autolog bug
+## Resultado do tuning de hiperparâmetros
 
-**Tooling note:** planned as `GridSearchCV` + `mlflow.sklearn.autolog()`
-(per `architecture.md`), but autolog's per-candidate child-run creation
-throws internally on the installed MLflow version
-(`'NoneType' object has no attribute '_to_mlflow_entity'`) — confirmed
-only 1 of 24 expected runs was actually logged, despite all 24 candidates
-being evaluated correctly under the hood (`cv_results_` was intact,
-only MLflow visibility was broken). Switched to the same manual
-per-combination logging already used in `model_selection.py` /
-`feature_engineering.py`, verified to reproduce identical metrics before
-discarding the `GridSearchCV` run. Same category of issue as the
-filesystem-tracking-backend deprecation earlier — a version-driven
-tooling correction, not a design change.
+**Achado: `fit_prior` não tem efeito nenhum no ComplementNB.** Todo par
+`fit_prior=True`/`False` produziu métricas idênticas nas 12 combinações de
+`alpha`/`norm` testadas. Não é um bug do nosso pipeline — a implementação do
+`ComplementNB` do sklearn não incorpora o termo de prior de classe na regra
+de decisão, conforme a formulação do artigo original. Confirmado
+empiricamente, não assumido.
 
-**Finding: `fit_prior` has zero effect on ComplementNB.** Every
-`fit_prior=True`/`False` pair produced bit-for-bit identical metrics
-across all 12 `alpha`/`norm` combinations. This isn't a bug in our
-pipeline — sklearn's `ComplementNB` implementation doesn't incorporate
-the class-prior term into its decision rule at all, per the original
-paper's formulation (unlike `MultinomialNB`, where `fit_prior` does
-matter). Confirmed empirically rather than assumed; not worth keeping as
-a tuning dimension going forward.
+**Resultado: `alpha=0,5, norm=True`** — F1-macro 0,769, `undertriage_rate`
+0,048. A mesma tensão F1-macro-vs-undertriage recorreu neste terceiro nível: o
+ponto de melhor F1-macro (`alpha=0,1, norm=False`, F1=0,777) tem undertriage
+pior que nossa baseline anterior (0,056 vs 0,053). `norm=True` é
+consistentemente o que compra melhoria de undertriage em todo o grid, a um
+custo real de F1-macro. Dos três pontos na fronteira de troca — máximo F1,
+máxima segurança (`alpha=0,05, norm=True`, undertriage 0,038 mas F1 caindo
+para 0,751) e este meio-termo — escolhemos o meio-termo: melhoria
+significativa de undertriage sobre a baseline pré-tuning (~9% de redução
+relativa) sem o custo de F1 mais acentuado do ponto de máxima segurança.
 
-**Result: `alpha=0.5, norm=True`** — F1-macro 0.769, `undertriage_rate`
-0.048. The same F1-macro-vs-undertriage tension recurred at this third
-level (after model choice and TF-IDF config): the F1-macro-best point
-(`alpha=0.1, norm=False`, F1=0.777) has *worse* undertriage than our
-prior baseline (0.056 vs 0.053) — reopening the exact tension we'd
-already resolved in favor of safety at model-selection. `norm=True`
-(ComplementNB's optional weight-renormalization step from the original
-paper) is consistently what buys undertriage improvement across the
-whole grid, at a real F1-macro cost. Of the three points on that
-tradeoff frontier — max-F1 (`alpha=0.1, norm=False`), max-safety
-(`alpha=0.05, norm=True`, undertriage 0.038 but F1 down to 0.751), and
-this balanced middle — chose the middle: a meaningful undertriage
-improvement over the pre-tuning baseline (~9% relative reduction) without
-the steepest F1 cost of the max-safety point. Consistent with the
-safety-first lean established at model-selection, without over-rotating
-into it a second time.
+## Split treino/validação/teste e vazamento de dado
 
-## Train/validation/test split and data leakage
+**Decisão:** um conjunto de teste (~15–20%) é separado uma única vez no
+início, nunca tocado durante seleção de modelo, engenharia de features ou
+tuning de hiperparâmetros. Todas as etapas de experimentação usam Stratified
+K-Fold sobre o restante dos dados. O pipeline final é retreinado no pool
+completo de treino+validação e avaliado uma única vez no conjunto de teste —
+esse é o número reportado no README.
 
-**Decision:** a test set (~15–20%) is carved out once at the start, never
-touched during model-selection, feature-engineering, or hyperparameter-tuning.
-All experimentation stages use Stratified K-Fold over the remaining data. The
-final pipeline (winning model + feature config + hyperparameters) is retrained
-on the full train+validation pool and evaluated exactly once on the test set —
-that's the number reported in the README.
+**Por que isso importa:** avaliar repetidamente contra o mesmo conjunto de
+teste em cada etapa de decisão, mesmo sem treinar diretamente nele, cria
+overfitting indireto a esse conjunto.
 
-**Why this matters:** repeatedly evaluating against the same test set at every
-decision stage, even without directly training on it, creates indirect
-overfitting to that test set. Setting aside a single test set and using it
-only once, at the end, avoids that trap.
+**Uso de `sklearn.pipeline.Pipeline`:** o vetorizador TF-IDF e o classificador
+são agrupados em um único objeto `Pipeline` — não é só conveniência de
+deploy, previne estruturalmente vazamento de dado: quando passado para
+`cross_validate`/`GridSearchCV`, o vetorizador é reajustado só nos dados de
+treino de cada fold. O mesmo objeto `Pipeline` treinado é salvo, carregado
+pelo serviço FastAPI e exportado para ONNX — um único artefato, comportamento
+idêntico em todo lugar.
 
-**Use of `sklearn.pipeline.Pipeline`:** the TF-IDF vectorizer and classifier
-are bundled into a single `Pipeline` object. This isn't just deployment
-convenience — it structurally prevents data leakage: when the `Pipeline` is
-passed to `cross_validate`/`GridSearchCV`, the vectorizer is refit only on
-each fold's training data, never on validation data. The same trained
-`Pipeline` object is saved, loaded by the FastAPI service, and exported to
-ONNX — one artifact, identical behavior everywhere, no risk of
-training-serving skew.
+## Otimização de latência (Etapa 4)
 
-## Latency optimization (Etapa 4)
+**Decisão:** a técnica aplicada depende de qual modelo vence a seleção —
+modelo linear: exportação ONNX + quantização dinâmica INT8; Random Forest:
+exportação ONNX + poda por complexidade de custo (`ccp_alpha`).
 
-**Decision:** the technique applied depends on which model wins selection:
-- Linear model winner: ONNX export + dynamic INT8 quantization.
-- Random Forest winner: ONNX export + cost-complexity pruning (`ccp_alpha`)
-  and/or reduced `n_estimators`.
+**Por que não forçar quantização de qualquer forma:** quantização reduz a
+precisão numérica de matrizes de peso densas — não se aplica a ensembles de
+árvore, que não têm essa estrutura. Forçar essa técnica em um Random Forest
+seria um erro de categoria.
 
-**Why not force quantization either way:** quantization reduces the numeric
-precision of dense weight matrices (matrix multiplication) — it doesn't
-meaningfully apply to tree ensembles, which have no such structure. Forcing
-this technique onto a Random Forest would be a category error. Tree pruning
-(`ccp_alpha`), on the other hand, is literally where the term "pruning"
-historically comes from (predating its use in neural networks) — the more
-appropriate technique here, not a lesser alternative.
+**Métrica reportada:** P50/P95/P99 sobre todo o pipeline de `/predict`
+(pré-processamento + inferência + resposta), não só `model.predict()` — o
+pré-processamento pode ser 40–60% da latência total em um sistema não
+otimizado.
 
-**Metric reported:** P50/P95/P99 over the whole `/predict` pipeline
-(preprocessing + inference + response), not just `model.predict()` —
-preprocessing can be 40–60% of total latency in an unoptimized system.
+**O ComplementNB não é nenhum dos dois ramos, e foi tratado como o linear.**
+O modelo vencedor é Naive Bayes; sua regra de decisão (produto escalar contra
+uma matriz de peso densa por classe) é arquitetonicamente da mesma forma que
+o `coef_` de um modelo linear, então foi exportado e quantizado da mesma
+forma.
 
-**ComplementNB is neither branch, and was treated as the linear one.**
-The winning model (see model-selection above) is Naive Bayes, not
-anticipated by either branch above. Its decision rule — a dot product
-against a dense per-class weight matrix (`feature_log_prob_`) — is
-architecturally the same shape as a linear model's `coef_`, so it was
-exported and quantized the same way as the linear branch. Random Forest's
-pruning technique has no analogue here: pruning operates on tree
-structure, and ComplementNB has none.
+**Resultado** (benchmark de 500 requisições, um documento por vez):
 
-**Result** (500-request benchmark, single document at a time, `models/`):
-
-| Variant | P50 | P95 | P99 | F1-macro | Size |
+| Variante | P50 | P95 | P99 | F1-macro | Tamanho |
 |---|---|---|---|---|---|
-| sklearn baseline | 0.595ms | 0.814ms | 1.040ms | 0.7786 | 1,233KB |
-| ONNX FP32 | **0.135ms** | **0.263ms** | **0.339ms** | 0.7786 (exact) | 413KB |
-| ONNX INT8 (dynamic) | 0.163ms | 0.281ms | 0.397ms | 0.7803 | 267KB |
+| Baseline sklearn | 0,595ms | 0,814ms | 1,040ms | 0,7786 | 1.233KB |
+| ONNX FP32 | **0,135ms** | **0,263ms** | **0,339ms** | 0,7786 (exato) | 413KB |
+| ONNX INT8 (dinâmico) | 0,163ms | 0,281ms | 0,397ms | 0,7803 | 267KB |
 
-**Chosen: ONNX FP32 as the served artifact.** ONNX export alone is the
-dominant win — 4.4x faster at P50, 3x smaller, and mathematically exact
-(F1-macro unchanged, not approximated). INT8 quantization is
-counterintuitively *slower* than FP32 here (0.163ms vs. 0.135ms P50), not
-faster — at this scale, the whole model already runs in a fraction of a
-millisecond, so the dequantization overhead added around each quantized
-op outweighs the compute savings from smaller integer math. Quantization
-only pays off on latency when compute time dominates over per-call
-overhead, which isn't the case for a model this small. What INT8 does
-deliver is a real size reduction (35% smaller than FP32) — a legitimate
-choice if container/memory footprint is the priority, just not the
-latency win it's usually reached for. This is reported as a genuine
-negative finding on quantization, not glossed over as a win because the
-plan called for it.
+**Escolhido: ONNX FP32 como artefato servido.** A exportação ONNX sozinha já
+é o ganho dominante — 4,4x mais rápido no P50, 3x menor, e matematicamente
+exato. A quantização INT8 é, contraintuitivamente, mais *lenta* que FP32
+aqui — nessa escala, o modelo inteiro já roda em uma fração de milissegundo,
+então o overhead de desquantização por operação supera a economia de
+compute. O que o INT8 entrega de fato é uma redução real de tamanho (35%
+menor que FP32) — uma escolha legítima se espaço em disco/memória for a
+prioridade, só não é o ganho de latência normalmente buscado com essa
+técnica. Reportado como um achado negativo genuíno sobre quantização, não
+maquiado como vitória.
 
-**Two tooling snags getting quantization to run at all**, both specific
-to `skl2onnx`'s text-pipeline graph (`TfIdfVectorizer` + Naive Bayes ops
-aren't the vision/NLP graphs onnxruntime's quantization tooling is
-built/tested against):
-1. `quant_pre_process`'s full symbolic shape inference throws
-   (`"Incomplete symbolic shape inference"`) on this graph — worked
-   around with `skip_symbolic_shape=True`, which still runs basic shape
-   inference + model optimization.
-2. `quantize_dynamic` itself then fails
-   (`"Unable to find data type for weight_name='sum_result'"`) on an
-   intermediate tensor from ComplementNB's decision-rule subgraph the
-   quantizer's type inference can't resolve — worked around with
-   `extra_options={"DefaultTensorType": onnx.TensorProto.FLOAT}`. Needed
-   adding `sympy` as an explicit dependency (required by the symbolic
-   shape inference step, not declared as a transitive dependency by
-   `onnxruntime` itself).
+## Airflow em modo standalone
 
-## Tooling: uv, DVC, MLflow
+**Decisão:** `airflow standalone` (backend SQLite), não o docker-compose
+oficial de produção (Postgres + Redis + webserver + scheduler + worker).
 
-**uv:** replaces `requirements.txt`/Poetry, no meaningful adoption cost.
+**Por quê:** o desafio pede uma DAG "simples" simulando train/retrain — o
+compose de produção oficial é desproporcional para uma demo de 3 tarefas. A
+DAG é disparada manualmente (não há um fluxo real de novos dados alimentando
+este projeto), demonstrando capacidade de orquestração, não uma necessidade
+real de retreino recorrente neste contexto.
 
-**DVC + S3 (not just local):** even with a static dataset (unchanged
-throughout the project), we chose to host it on S3 via real DVC rather than
-locally only — this reflects how it's actually done in industry and avoids
-treating the practice as decorative.
+**3 tarefas** (`ingest` → `train` → `save_model`), rodando em um container
+Docker dedicado (Airflow não roda nativamente no Windows). Verificado de
+fato, não só assumido: a DAG foi rodada duas vezes contra o dataset e o
+remoto S3 reais, e as métricas logadas na segunda run (`f1_macro=0,7786`,
+`undertriage=0,0498`) bateram exatamente com os números já reportados no
+README — reprodutibilidade real entre ambientes.
 
-**MLflow, 4 separate experiments, from the start:** `model-selection`,
-`feature-engineering`, `hyperparameter-tuning`, `latency-optimization`. Local
-tracking, no dedicated server — viewed via `mlflow ui` in the browser.
-Separating these stages into distinct experiments (common industry practice)
-keeps each stage's search space clean and comparable.
+## Teste no mundo real revelou uma limitação genuína de mudança de domínio
 
-**SQLite backend instead of the plain filesystem store:** originally planned
-as file-based tracking (`mlruns/` only, no database). In practice, the
-installed MLflow version (3.15.2) has put the plain filesystem backend into
-maintenance mode — `mlflow ui` refuses to start against `./mlruns` at all,
-raising `MlflowException` and pointing at a database backend instead (it's
-possible to force the old behavior via `MLFLOW_ALLOW_FILE_STORE=true`, but
-running the graded deliverable against a backend MLflow itself says "will
-not receive further updates" felt like the wrong tradeoff for a project
-meant to reflect current practice). Switched to the MLflow-recommended local
-SQLite backend (`mlflow.db`) for run/experiment metadata instead —
-`training/mlflow_config.py` centralizes the tracking URI so every
-experiment script points at the same store. Artifacts (confusion matrices,
-classification reports) still land under `mlruns/` regardless of backend —
-only the metadata store moved. Still fully local, still no tracking-server
-infra to run or maintain — the substance of the original plan is unchanged,
-this is a version-driven correction, not a design change.
+Depois do deploy, testes manuais com frases de triagem realistas (não no
+estilo abstract) revelaram erros concretos de classificação, confirmando um
+risco que o `model-card.md` já havia sinalizado teoricamente antes de
+qualquer evidência existir. Quatro exemplos, e o que revelaram:
 
-## CI/CD and AWS
-
-**Real push to ECR via GitHub Actions:** authentication via OIDC (federation
-with `token.actions.githubusercontent.com`), no static AWS keys stored as
-GitHub secrets — standard industry security practice.
-
-**App Runner, not EC2/Lambda/Batch/SageMaker, for real-time inference:** the
-scenario requires an immediate response (hospital triage), which rules out
-Lambda's per-invocation cold start — the model needs to stay loaded in memory
-continuously. The challenge only requires this decision to be written up in
-the README (not deployed), but we chose to actually deploy it: App Runner
-gives the same always-warm container behavior as EC2 without EC2's
-operational overhead — no instance to provision, no SSH, no security groups,
-no OS patching. Point it at a tagged image in ECR and it runs. Full
-justification (App Runner vs. Lambda vs. Batch vs. SageMaker vs. raw EC2)
-still goes in the README, since that section is graded regardless of whether
-deployment is real.
-
-**Why deploy for real when the challenge doesn't require it:** a live,
-demoable endpoint is a stronger STAR-video "Result" than a localhost screen
-recording, and App Runner's low operational cost (nothing to manage or patch)
-makes the extra realism cheap enough to justify. Torn down after the
-grading/demo window — no need to keep it running afterward.
-
-**Actually deployed on Elastic Beanstalk, not App Runner.** Discovered only
-when attempting the real deployment: App Runner isn't part of AWS Free Tier.
-Rather than quietly incur charges or silently rewrite the "why App Runner"
-reasoning above (which is still sound — it's the *documented* choice, and
-what the README's written justification is about), switched the actually
-*deployed* service to Elastic Beanstalk running Docker on a single free-tier
-EC2 instance: same always-warm, no-cold-start property App Runner offered
-(Beanstalk keeps the instance running continuously, doesn't scale to zero
-between requests), rides free-tier EC2 hours, and Beanstalk still absorbs
-most of the manual EC2 ops burden (provisioning, health checks, deployment)
-that App Runner would have avoided — closest free-tier-eligible match to
-the original intent. Specifically the **single-instance** environment type,
-not "load balanced, auto scaling" — that tier provisions an Elastic Load
-Balancer, which is billed separately and isn't Free Tier eligible, which
-would have defeated the entire point of switching. This is a real,
-documented pivot forced by a budget constraint discovered late, not a
-design change — same category as the MLflow filesystem-backend correction
-and the `dvc`/`pygtrie` CI dependency fix earlier in this document.
-
-**CI auto-deploys to Beanstalk on every push to main — and the IAM policy
-for it ended up needing to be AWS-managed, not hand-scoped.** After the
-first successful manual deployment, extended the `build-and-push` job to
-rewrite `Dockerrun.aws.json`'s image tag, create a new Beanstalk
-application version, and update the environment automatically — verified
-by polling `describe-environments` afterward and failing the job if health
-isn't `Green`, so a broken deploy is visible in CI rather than requiring a
-manual console check.
-
-Getting the IAM permissions right took several rounds, each surfacing a
-genuinely new requirement rather than a mistake in the previous fix:
-`elasticbeanstalk:UpdateEnvironment` itself, then `s3:CreateBucket` on
-Beanstalk's own storage bucket (needed even though the bucket already
-existed — IAM authorization happens before S3's idempotent "you already
-own this" check), then `s3:PutBucketOwnershipControls` (likely reflecting
-an S3 default-security change made after older example policies were
-written). Research at that point turned up that a properly-scoped policy
-for this actually needs wildcard-resource `autoscaling:*`/
-`cloudformation:*`/`ec2:*` too, since Beanstalk provisions those services
-under the hood via CloudFormation even for a single-instance environment —
-at which point hand-scoping had lost its point. Switched to the AWS-managed
-`AdministratorAccess-AWSElasticBeanstalk` policy (the current replacement
-for the now-deprecated `AWSElasticBeanstalkFullAccess`) instead of
-continuing to chase individual permissions one at a time. Broader than the
-scoped-policy approach used for ECR/DVC's S3 access, but the pragmatic
-choice given Beanstalk's own API surface is broad and evolving in ways a
-hand-maintained policy can't keep pace with — an explicit, deliberate
-trade-off, not the path of least resistance taken by default.
-
-**Pre-deploy smoke test and automated rollback — closing two real gaps in
-the deploy pipeline.** Neither was theoretical: reviewing the pipeline
-against "what would real production need" surfaced that (1) Beanstalk's
-health check, and our own polling of it, relies on `/health`
-(`app/main.py`), which is a static `{"status": "ok"}` with zero dependency
-on the model — a build with a missing/corrupted `pipeline_fp32.onnx` or a
-broken `/predict` path would report perfectly healthy right up until a real
-user hit it; and (2) a failed post-deploy health check just failed the CI
-job, leaving whatever got deployed live and broken until someone noticed
-and manually fixed it.
-
-**Smoke test**: after `docker build`, the image is run right there in the
-CI runner (`docker run -d`, poll `/health`, then a real `POST /predict`)
-and the response validated for shape — known category, known urgency
-tier, correct types — before the image is ever pushed to ECR. This is
-deliberately *not* a model-quality/regression gate (comparing against
-ground truth, blocking a worse retrain) — that's a different, larger
-problem, considered and explicitly declined earlier (see the retrain-gate
-discussion this DAG's design grew out of); this only proves the deployed
-thing *functions*, not that it's *accurate*. Verified for real, not just
-written: built the actual image locally, ran the exact commands the
-workflow uses, confirmed a good response passes (`jq -e` exits 0) and a
-deliberately malformed one fails it (exits 1) — using real `jq` via
-`docker run ghcr.io/jqlang/jq`, since the local dev shell didn't have `jq`
-installed (GitHub's `ubuntu-latest` runners do, by default).
-
-**Automated rollback**: the deploy step now records the environment's
-live `VersionLabel` via `describe-environments` *before* calling
-`update-environment` with the new one. If the new version's health check
-comes back anything other than `Green`, it automatically re-deploys the
-captured previous version and polls again to confirm *that* comes back
-healthy — the job still exits non-zero either way (so a failed deploy is
-never silently invisible), but production serves the last-known-good
-version again within the same run instead of sitting broken. Guards the
-edge case of no previous version existing (first-ever deploy) by skipping
-rollback and failing plainly instead of trying to roll back to `None`.
-
-**What this still doesn't fix, on purpose**: true redundancy (a
-load-balanced/multi-AZ Beanstalk tier, or blue-green swaps) would need an
-Application Load Balancer, which isn't Free Tier eligible — the same
-constraint that kept the environment single-instance in the first place.
-Both additions here are free (CI-only logic, no new AWS resources) and
-target the two failure modes that mattered most without reopening that
-cost tradeoff.
-
-## Airflow in standalone mode
-
-**Decision:** `airflow standalone` (SQLite backend), not the official
-production docker-compose (Postgres + Redis + webserver + scheduler + worker).
-
-**Why:** the challenge asks for a "simple" DAG simulating train/retrain — the
-official production compose is disproportionate for a 3-task demo. The DAG is
-triggered manually (there's no real stream of new data feeding this project),
-demonstrating orchestration capability rather than an actual recurring
-retraining need in this specific context.
-
-**3 tasks, not 1 — and why the file-path-through-XCom design, not the
-fitted pipeline object:** `ingest` (`dvc pull`) → `train` (fit + evaluate +
-log to MLflow + save `pipeline.joblib`) → `save_model` (derive
-`vocabulary.json` from the saved pipeline). `training/train_final.py`'s
-`run()` already did all of `train` + `save_model`'s work in one function;
-splitting it was purely to make the DAG's graph visibly match the
-challenge's "load CSV → train → save model" wording as separate, inspectable
-nodes, not because the code naturally wanted to split there. The split
-point matters: `train` fits, evaluates, logs to MLflow, *and* writes
-`pipeline.joblib` to disk, then hands `save_model` only the file path (a
-string) via XCom — not the fitted `Pipeline` object itself. Passing the
-object would need `enable_xcom_pickling` (Airflow's default XCom backend
-only accepts JSON-serializable values) and would write a ~1.2MB blob into
-Airflow's metadata DB — legal, but atypical, non-idiomatic XCom usage.
-"Pass a reference, not the payload" is the standard Airflow idiom for
-non-trivial data (it's also how Airflow scales this for real distributed
-executors, via custom XCom backends that transparently offload large
-values to S3/GCS). Since the split point is *after* evaluation/metric
-logging and *before* the file write, none of the metric-computation logic
-moved — `run()` itself is now a two-line wrapper (`train_and_evaluate()` +
-`save_vocabulary()`) preserving the exact original single-command
-behavior, so the already-reported README numbers stay reproducible via
-`python -m training.train_final` unchanged.
-
-**Airflow doesn't run on native Windows — real blocker, not a
-theoretical one:** discovered by actually trying to run it in an isolated
-`uv venv` on the host (the original plan for keeping Airflow's
-dependencies separate from `training`'s, to avoid a resolver conflict
-between Airflow's strict version pins and `mlflow`/`pandas`/`scikit-learn`).
-Installed cleanly, then failed immediately on `airflow version` with
-`AttributeError: module 'os' has no attribute 'register_at_fork'` —
-Airflow relies on a POSIX-only API with no Windows equivalent; its own
-startup warning says as much ("via WSL2 ... or via Linux Containers").
-Not a dependency-conflict problem environment isolation could fix — an OS
-incompatibility. **Fix:** moved Airflow into a dedicated Docker container
-(`airflow/Dockerfile` + `airflow/docker-compose.yml`, separate from the
-root `docker-compose.yml` — a different concern, not part of that stack).
-This actually preserves the original isolation goal cleanly: the official
-`apache/airflow` image plus `uv` installed inside it, with
-`UV_PROJECT_ENVIRONMENT` pointed at a container-local path so `uv run
---group training ...` (what each task shells out to) creates its own venv
-inside the container rather than colliding with the bind-mounted repo's
-host-managed `.venv`. The repo is mounted read-write so `ingest`/`train`/
-`save_model` still write real files into `data/`/`models/` on the host,
-same as running the scripts directly.
-
-**A second real bug this surfaced: MLflow artifact-path collision across
-OSes.** The first real run inside the container failed with
-`PermissionError: [Errno 13] Permission denied: '/C:'` from deep inside
-`mlflow.log_text`. Cause: the container bind-mounts the whole repo,
-including the host's `mlflow.db` (SQLite tracking store) — and that db
-already had the `final-model` experiment registered from earlier native
-Windows runs, with an absolute Windows path (`C:\...`) baked into its
-`artifact_location`. MLflow experiments' `artifact_location` is fixed at
-creation time; reusing the same experiment name meant inheriting that
-Windows path, which Linux then tried (and failed) to interpret as
-`/C:/...`. **Fix:** `training/mlflow_config.py`'s `TRACKING_URI` now reads
-`$MLFLOW_TRACKING_URI` with the original hardcoded value as the default
-(no behavior change for native runs) — the Airflow container sets it to
-its own separate SQLite file
-(`sqlite:////opt/airflow/mlflow-training/mlflow.db`, in the container's
-named volume, not the bind-mounted repo), so it creates `final-model`
-fresh with a container-appropriate artifact path instead of colliding
-with the host's experiment history. Verified fixed by actually running the
-DAG successfully afterward, twice — not just reasoning about the cause.
-
-**Verification, not just "should work":** ran the DAG twice for real
-against the real dataset and real S3 remote (not a toy/mocked run). Both
-runs completed all three tasks successfully; the second run's logged
-metrics (`f1_macro=0.7786`, `undertriage=0.0498`) matched the README's
-already-reported numbers exactly — genuine cross-environment
-reproducibility (Linux container vs. the native Windows runs that
-originally produced those numbers, same fixed `random_state=42`), not
-assumed.
-
-## Monitoring stack: dual scrape targets, and a real query bug caught
-
-**Decision:** Prometheus (`monitoring/prometheus.yml`) scrapes two targets,
-both labeled with an `environment` label for the Grafana dashboard to
-break down by: the local `docker-compose` `api` service, and the live AWS
-deployment (`medsys.us-east-1.elasticbeanstalk.com`). The literal
-requirement only needs the local, self-contained stack (api + prometheus +
-grafana all as compose services) — the second target is a deliberate
-extra, since it costs nothing (Prometheus scraping one more HTTP endpoint)
-and makes the demo materially stronger: real production traffic (including
-all our own manual testing throughout this project) shown alongside
-synthetic local traffic in the same panels, not just local test calls.
-
-**Bug found via actual browser verification, not just "Grafana accepted
-the dashboard JSON":** the Error Rate panel's query
-(`sum(rate(...{status="error"}...)) / sum(rate(...))`) showed **"No
-data"** rather than an explicit 0% when there had genuinely been zero
-errors — technically correct PromQL behavior (a ratio's numerator has no
-series to divide when no `status="error"` samples exist at all yet), but
-visually indistinguishable from the panel being broken. Fixed with a
-`... or on(environment) sum(...) * 0` fallback, guaranteeing a
-zero-valued series per environment even with no error samples. Same
-verification discipline as everywhere else in this project: dashboard
-JSON validating and Grafana provisioning it without error doesn't mean
-the panels actually render real data — confirmed via an actual browser
-session with real generated traffic, which is exactly what surfaced this.
-
-## Streamlit frontend (extra, not graded)
-
-Separate, simple application calling the API's `/predict` endpoint over HTTP
-(no duplicated model logic) — added purely to make the video demo more visual
-than showing Swagger docs or a curl command. Explicitly marked as not
-required.
-
-**Hosted on Streamlit Community Cloud, not the same AWS account as the
-API.** Considered running it as a second Elastic Beanstalk environment
-(consistent with the rest of the stack) but rejected: that would mean a
-second continuously-running EC2 instance for a component that does no
-inference at all, just an HTTP client — doubling Free Tier instance-hour
-consumption for no real benefit, straight after having to pivot the API's
-own deployment specifically *because of* that same budget constraint (see
-"Actually deployed on Elastic Beanstalk, not App Runner" above). Streamlit
-Cloud is free, deploys straight from this repo, and keeps the frontend and
-API genuinely decoupled — it reaches the API the same way any external
-client would, over the public `medsys.us-east-1.elasticbeanstalk.com`
-endpoint, not via any AWS-internal networking. One real cost: Streamlit
-Cloud doesn't support `uv`'s `pyproject.toml`/`uv.lock` format (misreads
-`pyproject.toml` as Poetry format), so `frontend/requirements.txt` exists
-as a plain, minimally-scoped dependency list just for this one deployment
-target — a small, contained bit of duplication versus a second AWS
-environment's worth of ops overhead.
-
-## Real-world testing surfaced a genuine domain-shift limitation
-
-After deployment, manual testing against realistic (not abstract-style)
-triage phrasing surfaced concrete misclassifications, confirming a risk
-`model-card.md` had already flagged theoretically ("Domain shift risk")
-before any evidence existed. Four examples, and what they revealed:
-
-| Input | Predicted (before fix) | Root cause |
+| Entrada | Previsto (antes da correção) | Causa raiz |
 |---|---|---|
-| "Unresponsive, no detectable pulse, non-breathing." | `normal` | Words *are* in vocabulary (`unresponsive`, `pulse`, `breathing`), but the model never learned to associate this register with urgency — trained only on formal PubMed-style abstracts, never on clinical shorthand. |
-| "stomachache" | `cardiovascular` / `urgent` | Genuinely **zero** TF-IDF features — `stomachache` never appears in the training vocabulary at all (only `stomach` does; TF-IDF doesn't do subword matching). With no real evidence, the prediction is driven entirely by ComplementNB's structural class bias (the same safety-tilt that won model-selection) applied to an empty vector, not a real judgment. |
-| "Acute respiratory distress, ... severe facial/airway swelling, blood pressure 80/50 mmHg following a bee sting." | `attention` (anaphylaxis, should be `urgent`) | Keyword-adjustment design bug: capped at exactly one tier regardless of how many escalate words matched. 2 hits (`acute`, `severe`) only moved normal→attention, not further. |
-| "Asymptomatic patient requesting a routine prescription renewal for hypertension medication; mild ... rash ..." | `attention` (should be closer to `normal`) | Category-level miss (`cardiovascular`, likely from "hypertension" dominating the TF-IDF signal despite being mentioned as routine background, not the active complaint) compounded by the same one-tier cap masking the 2 de-escalate hits (`routine`, `mild`) that should have corrected further. |
+| "Unresponsive, no detectable pulse, non-breathing." | `normal` | As palavras *estão* no vocabulário, mas o modelo nunca aprendeu a associar esse registro à urgência — treinado só em abstracts formais estilo PubMed, nunca em linguagem clínica informal. |
+| "stomachache" | `cardiovascular` / `urgente` | Genuinamente **zero** features TF-IDF — `stomachache` nunca aparece no vocabulário de treino. Sem evidência real, a previsão é guiada inteiramente pelo viés estrutural de classe do ComplementNB aplicado a um vetor vazio. |
+| "...severe facial/airway swelling, blood pressure 80/50 mmHg following a bee sting." | `atenção` (anafilaxia, deveria ser `urgente`) | Bug de design no ajuste por palavra-chave: limitado a exatamente um nível independente de quantas palavras de escalada batessem. |
+| "Asymptomatic patient requesting a routine prescription renewal for hypertension medication; mild ... rash ..." | `atenção` (deveria ser mais perto de `normal`) | Erro no nível de categoria somado ao mesmo limite de um nível mascarando os acertos de de-escalada que deveriam ter corrigido mais. |
 
-**Two of these are genuine, code-only bugs — fixed, not just documented:**
+**Duas dessas são bugs genuínos de código — corrigidos, não só documentados:**
 
-1. **Keyword-adjustment now scales with the net score instead of capping at
-   one tier** (`app/urgency.py`): `tier = clamp(baseline + net, 0, 2)`
-   instead of `tier = baseline ± 1`. Verified against the real cases:
-   anaphylaxis now reaches `urgent` (was `attention`); the routine-renewal
-   case now reaches `normal` (was `attention`) — the de-escalate signal was
-   strong enough to fully correct what would otherwise have been a
-   dangerous over-triage from the flawed category prediction. No
-   retraining involved — pure inference-time logic change.
+1. **O ajuste por palavra-chave agora escala com o placar líquido em vez de
+   saturar em um nível** (`app/urgency.py`): `tier = clamp(baseline + net, 0,
+   2)` em vez de `tier = baseline ± 1`. Verificado: anafilaxia agora chega a
+   `urgente` (era `atenção`); o caso de renovação de rotina agora chega a
+   `normal` (era `atenção`).
+2. **Uma trava de baixa confiança agora sinaliza entradas com sinal quase
+   vazio** (`app/model.py::has_known_vocabulary`, exposta como
+   `low_confidence: bool` em `/predict`). **Revisado após o primeiro
+   deploy**: a primeira versão só elevava um piso de urgência (subia um
+   palpite baixo, mantinha um alto) — para "stomachache", a categoria bruta
+   já implicava `urgente`, então o piso não fazia nada e a UI mostrava
+   `URGENT` ao lado de um aviso de baixa confiança, contraditório. Corrigido
+   para uma **substituição fixa**: `low_confidence` agora sempre força
+   `urgency = "attention"`, descartando o palpite bruto por completo — um
+   sinal deliberado de "sinalizar para revisão humana". Também foi
+   adicionado um campo `message` orientando a reenviar com mais detalhe.
 
-2. **A low-confidence guard now flags near-empty-signal inputs**
-   (`app/model.py::has_known_vocabulary`, wired into `/predict`'s response
-   as `low_confidence: bool`). Checks token overlap against the
-   vectorizer's vocabulary (exported once, as plain JSON, from the
-   already-fitted `models/pipeline.joblib` — reading a fitted model's
-   learned vocabulary isn't training, so this touches nothing that would
-   risk test-set leakage). Verified: "stomachache" now returns
-   `low_confidence: true`.
+**Uma é uma limitação genuína, não corrigível por nenhuma das duas mudanças —
+documentada, não aceita silenciosamente.** O exemplo de parada cardíaca
+(`normal`, `low_confidence: false`) falha porque seu vocabulário genuinamente
+se sobrepõe aos dados de treino, só que não de um jeito que o modelo aprendeu
+a associar com urgência — um descompasso real de registro entre o *Medical
+Abstracts TC Corpus* (escrita formal, acadêmica) e como a urgência é de fato
+comunicada em uma frase clínica curta de triagem. **Mais dados de treino do
+mesmo tipo não resolveriam isso** — o corpus é a única fonte disponível, e
+mais abstracts só melhorariam o desempenho em texto estilo abstract. Uma
+correção real precisaria de exemplos nesse registro diferente (notas de
+triagem reais ou realisticamente sintetizadas) — um aumento genuíno de
+escopo. Ver `model-card.md` § Caveats.
 
-   **Revised after initial deployment**: first version *floored* urgency
-   at `attention` (raised a low guess up, left a high one unchanged) —
-   for "stomachache," the raw category (`cardiovascular`) already implied
-   `urgent`, so the floor was a no-op and the UI displayed `URGENT` right
-   next to a warning about low confidence, which read as contradictory
-   even though each part was individually correct. Caught via user
-   testing of the deployed fix. The real issue was the floor's premise: a
-   raw `urgent` guess isn't actually safer or more justified than
-   `normal` when there's zero real evidence — it's equally ungrounded, in
-   the other direction. Changed to a **fixed override**: `low_confidence`
-   now always forces `urgency = "attention"` outright, discarding the raw
-   guess entirely rather than taking its max against a floor — a
-   deliberate "flag for human review" signal, not a hedge in either
-   direction. Also added a `message` field (populated only when
-   `low_confidence`) giving the caller concrete guidance to resubmit with
-   more clinical detail — surfaced in the Streamlit UI's warning too, not
-   just the API response.
+## Fora de escopo (deliberadamente)
 
-**One is a genuine limitation, not fixable by either change — documented,
-not silently accepted.** The cardiac-arrest example (`normal`,
-`low_confidence: false`) fails because its vocabulary genuinely does
-overlap with training data, just not in a way the model learned to
-associate with urgency — a real register mismatch between the *Medical
-Abstracts TC Corpus* (formal, third-person, academic case-report writing)
-and how urgency is actually communicated in short clinical/triage
-phrasing. **More training data of the same kind would not fix this** —
-the corpus is the only data source available, and more abstracts would
-only make the model marginally better at abstracts, not teach it a
-register it was never shown. A real fix would need training examples in
-that different register — real (or realistically synthesized) triage-note
-phrasing, not more academic abstracts — which is a genuine scope increase
-beyond what this project's timeline supports, not a quick follow-up. See
-`model-card.md` § Caveats for how this is now recorded as a validated,
-evidenced limitation rather than a theoretical one.
-
-## Out of scope (deliberately)
-
-Kubernetes/HPA/KEDA, Canary/Shadow deployment, implemented drift detection
-(PSI/KS — mentioned in the README as future work, not built), word/transformer
-embeddings, joint automated search (AutoML) over model+features+
-hyperparameters, ROC-AUC/PR-AUC/MCC, any real production traffic. All
-considered and consciously dropped for the reasons above — not from lack of
-awareness of what exists, but because they aren't justified within this
-challenge's scope and timeline.
+Kubernetes/HPA/KEDA, deploy Canary/Shadow, detecção de drift implementada
+(PSI/KS — mencionada no README como trabalho futuro, não construída),
+embeddings de palavra/transformer, busca automatizada conjunta (AutoML)
+sobre modelo+features+hiperparâmetros, ROC-AUC/PR-AUC/MCC. Todos
+considerados e conscientemente descartados pelos motivos acima — não por
+falta de conhecimento do que existe, mas porque não se justificam dentro do
+escopo e prazo deste desafio.

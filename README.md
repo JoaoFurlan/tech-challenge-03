@@ -64,20 +64,59 @@ curl -X POST http://medsys.us-east-1.elasticbeanstalk.com/predict \
   -d '{"text": "Patient presents with acute chest pain and shortness of breath, elevated troponin levels observed"}'
 ```
 
-**Demo frontend** (extra, não avaliado, `frontend/streamlit_app.py`): UI em
-Streamlit sobre `/predict`, hospedada separadamente no Streamlit Community
-Cloud (gratuito) para não duplicar horas de EC2 do Free Tier com um
-componente que é só um cliente HTTP.
+**Example Frontend** (`frontend/streamlit_app.py`): UI em Streamlit sobre
+`/predict`, hospedada separadamente no Streamlit Community Cloud (gratuito)
+para não duplicar horas de EC2 do Free Tier com um componente que é só um
+cliente HTTP. Acesse em https://medsys.streamlit.app/.
 
 ## Sumário
 
+- [Dataset](#dataset)
 - [Resultados do modelo](#resultados-do-modelo)
+- [Otimização de latência](#otimização-de-latência)
 - [Estrutura do projeto](#estrutura-do-projeto)
 - [Como reproduzir tudo localmente](#como-reproduzir-tudo-localmente)
-- [Dataset](#dataset)
-- [Otimização de latência](#otimização-de-latência)
 - [Arquitetura em nuvem: tempo real vs. batch](#arquitetura-em-nuvem-tempo-real-vs-batch)
 - [CI/CD](#cicd)
+
+## Dataset
+
+[Medical Abstracts TC Corpus](https://www.kaggle.com/datasets/chaitanyakck/medical-text)
+(`sebischair/Medical-Abstracts-TC-Corpus`) — abstracts médicos rotulados em 5
+categorias de doença, usados como ground truth do classificador. A urgência é
+derivada da categoria prevista por uma camada de mapeamento determinística,
+não aprendida diretamente (ver `docs/technical-decisions.md`).
+
+O Kaggle já entrega o corpus dividido em train/test, totalizando 14.438
+linhas. Não usamos esse split como veio — combinar os dois arquivos revelou:
+
+- **988 abstracts vazando** entre o split oficial de train/test (o mesmo
+  documento nos dois arquivos).
+- **2.929 abstracts com rótulos de categoria conflitantes** — o mesmo texto
+  atribuído a mais de uma categoria. É um artefato real do corpus original
+  (alguns documentos eram multi-rotulados, ex. tanto `cardiovascular
+  diseases` quanto o bucket genérico `general pathological conditions`),
+  explodido em linhas de rótulo único nesta versão do Kaggle.
+
+Os dois problemas são resolvidos combinando train+test e descartando por
+completo todo documento ambíguo, em vez de escolher arbitrariamente um
+rótulo por documento — raciocínio completo em `docs/technical-decisions.md`.
+Isso deixa:
+
+**8.298 documentos limpos e sem ambiguidade de rótulo**, re-divididos por
+nós (estratificado, ~15% como conjunto de teste, `random_state=42` fixo):
+
+| Categoria | Quantidade | Proporção |
+|---|---|---|
+| General pathological conditions | 2.394 | 28,9% |
+| Neoplasms | 2.195 | 26,5% |
+| Cardiovascular diseases | 1.961 | 23,6% |
+| Nervous system diseases | 1.049 | 12,6% |
+| Digestive system diseases | 699 | 8,4% |
+
+Ainda folgadamente acima do mínimo de 2.000 amostras exigido pelo desafio,
+com o desbalanceamento de classes (~3,4x) praticamente inalterado em relação
+ao corpus bruto (~3,2x).
 
 ## Resultados do modelo
 
@@ -128,195 +167,6 @@ o descasamento de registro não é resolvido só com mais dados do mesmo tipo �
 exigiria texto real de triagem, um aumento genuíno de escopo. Detalhes em
 `docs/technical-decisions.md` e `docs/model-card.md` § Caveats.
 
-## Estrutura do projeto
-
-```
-├── app/                    # API FastAPI (inferência)
-│   ├── main.py              # endpoints /predict, /health, /metrics
-│   ├── model.py              # carregamento e execução do modelo ONNX
-│   └── urgency.py            # mapeamento categoria -> nível de urgência
-├── training/               # experimentação e treino (rastreados em MLflow)
-│   ├── data.py                # carga e split do dataset
-│   ├── model_selection.py     # experimento 1: escolha do modelo
-│   ├── feature_engineering.py # experimento 2: TF-IDF, n-gramas, etc.
-│   ├── hyperparameter_tuning.py # experimento 3: tuning do modelo escolhido
-│   ├── train_final.py         # treino final + avaliação no held-out test
-│   ├── airflow_tasks.py       # tarefas usadas pela DAG do Airflow
-│   └── evaluation.py          # métricas de classificação e triagem
-├── optimization/           # experimento 4: exportação ONNX + benchmark
-│   └── export_and_benchmark.py
-├── dags/                   # DAG de retrain do Airflow
-│   └── train_pipeline_dag.py
-├── airflow/                # ambiente Docker isolado para rodar a DAG
-├── frontend/               # demo Streamlit (não avaliado)
-│   └── streamlit_app.py
-├── monitoring/             # config do Prometheus + provisionamento do Grafana
-├── models/                 # artefatos de modelo (versionados via DVC)
-├── data/                   # CSVs brutos (versionados via DVC)
-├── tests/                  # testes automatizados (API, urgência, smoke test)
-├── docs/
-│   ├── architecture.md         # o quê: dataset, pipeline, AWS, CI/CD, Airflow
-│   ├── technical-decisions.md  # o porquê: raciocínio de cada decisão não óbvia
-│   └── model-card.md           # documentação do modelo (formato Mitchell et al.)
-├── Dockerfile              # imagem da API servida em produção
-└── docker-compose.yml      # stack local: api + prometheus + grafana
-```
-
-## Como reproduzir tudo localmente
-
-**Pré-requisitos**: Python 3.11+, [`uv`](https://docs.astral.sh/uv/), Docker
-Desktop (com `buildx`), AWS CLI configurado (só necessário para puxar
-artefatos do DVC/S3).
-
-**1. Clonar e instalar dependências.** As dependências são divididas em
-grupos `uv` para que a imagem Docker servida não instale nada além do
-necessário:
-
-```bash
-git clone https://github.com/JoaoFurlan/tech-challenge-03
-cd tech-challenge-03
-uv sync --group dev          # base + dev (fastapi, pytest, ruff, ...)
-```
-
-| Necessidade | Comando |
-|---|---|
-| Rodar/editar a API, rodar testes, lint | `uv sync --group dev` |
-| Treinar, reexportar para ONNX, rodar experimentos MLflow | `uv sync --group training` |
-| Rodar o frontend Streamlit | `uv sync --extra frontend` |
-
-**2. Puxar dados e artefatos de modelo (DVC/S3)** — não estão no git:
-
-```bash
-uv run --group training dvc pull
-```
-
-**3. Rodar os testes e o lint** (o mesmo que a CI roda):
-
-```bash
-uv run pytest -q
-uv run ruff check .
-```
-
-**4. Treinar o modelo do zero** (opcional — os artefatos já vêm do DVC no
-passo 2). Cada etapa é um script simples, na ordem em que foram desenhadas:
-
-```bash
-uv run python -m training.model_selection        # experimento: seleção de modelo
-uv run python -m training.feature_engineering     # experimento: engenharia de features
-uv run python -m training.hyperparameter_tuning   # experimento: tuning
-uv run python -m training.train_final             # gera models/pipeline.joblib
-uv run python -m optimization.export_and_benchmark # gera models/pipeline_fp32.onnx
-```
-
-Inspecionar qualquer run (métricas, parâmetros, matrizes de confusão) na UI
-do MLflow, apontada para o SQLite local que todos os scripts usam:
-
-```bash
-uv run --group training mlflow ui --backend-store-uri sqlite:///mlflow.db
-```
-
-**5. Rodar a API sozinha** (loop mais rápido para editar `app/`):
-
-```bash
-uv run uvicorn app.main:app --reload --port 8000
-```
-
-`curl http://localhost:8000/health`, ou abra
-http://localhost:8000/docs para a documentação interativa (Swagger).
-
-**6. Rodar a stack completa de monitoramento** (API + Prometheus + Grafana):
-
-```bash
-docker compose up --build
-```
-
-| Serviço | URL |
-|---|---|
-| API | http://localhost:8000 (`/predict`, `/health`, `/metrics`) |
-| Prometheus | http://localhost:9090 |
-| Grafana | http://localhost:3000 (acesso anônimo de visualização, sem login) |
-
-Gere tráfego para ver o dashboard populando — ex. `curl -X POST
-http://localhost:8000/predict -H "Content-Type: application/json" -d
-'{"text": "..."}'` — ou use o Streamlit do passo seguinte.
-
-**7. Rodar o frontend de demo (Streamlit)**, apontado por padrão para
-`http://localhost:8000`:
-
-```bash
-uv run --extra frontend streamlit run frontend/streamlit_app.py
-```
-
-**8. Rodar a DAG de retrain do Airflow.** Roda em Docker, não diretamente no
-host — o Airflow não roda nativamente no Windows. É um ambiente separado do
-`docker-compose.yml` da raiz (orquestra retreino, não serve/observa a API):
-
-```bash
-cd airflow
-docker compose up --build -d
-```
-
-O container imprime a senha de admin gerada no primeiro boot —
-`docker compose logs | Select-String "Password for user"` (PowerShell) ou
-`docker compose logs | grep "Password for user"` (bash/zsh). Abra
-http://localhost:8081 e entre como `admin` com essa senha, depois dispare a
-DAG (`train_pipeline_dag`) pela UI ou via CLI:
-
-```bash
-docker compose exec airflow airflow dags unpause train_pipeline_dag
-docker compose exec airflow airflow dags trigger train_pipeline_dag
-```
-
-O container monta o repositório em modo leitura-escrita, então as tarefas
-`ingest`/`train`/`save_model` escrevem de volta em `data/`/`models/` no seu
-disco, do mesmo jeito que rodar os scripts de treino diretamente. Ao terminar:
-
-```bash
-docker compose down
-```
-
-Detalhes de por que o Airflow standalone é usado aqui (e não o
-docker-compose de produção) estão em `docs/technical-decisions.md`.
-
-## Dataset
-
-[Medical Abstracts TC Corpus](https://www.kaggle.com/datasets/chaitanyakck/medical-text)
-(`sebischair/Medical-Abstracts-TC-Corpus`) — abstracts médicos rotulados em 5
-categorias de doença, usados como ground truth do classificador. A urgência é
-derivada da categoria prevista por uma camada de mapeamento determinística,
-não aprendida diretamente (ver `docs/technical-decisions.md`).
-
-O Kaggle já entrega o corpus dividido em train/test, totalizando 14.438
-linhas. Não usamos esse split como veio — combinar os dois arquivos revelou:
-
-- **988 abstracts vazando** entre o split oficial de train/test (o mesmo
-  documento nos dois arquivos).
-- **2.929 abstracts com rótulos de categoria conflitantes** — o mesmo texto
-  atribuído a mais de uma categoria. É um artefato real do corpus original
-  (alguns documentos eram multi-rotulados, ex. tanto `cardiovascular
-  diseases` quanto o bucket genérico `general pathological conditions`),
-  explodido em linhas de rótulo único nesta versão do Kaggle.
-
-Os dois problemas são resolvidos combinando train+test e descartando por
-completo todo documento ambíguo, em vez de escolher arbitrariamente um
-rótulo por documento — raciocínio completo em `docs/technical-decisions.md`.
-Isso deixa:
-
-**8.298 documentos limpos e sem ambiguidade de rótulo**, re-divididos por
-nós (estratificado, ~15% como conjunto de teste, `random_state=42` fixo):
-
-| Categoria | Quantidade | Proporção |
-|---|---|---|
-| General pathological conditions | 2.394 | 28,9% |
-| Neoplasms | 2.195 | 26,5% |
-| Cardiovascular diseases | 1.961 | 23,6% |
-| Nervous system diseases | 1.049 | 12,6% |
-| Digestive system diseases | 699 | 8,4% |
-
-Ainda folgadamente acima do mínimo de 2.000 amostras exigido pelo desafio,
-com o desbalanceamento de classes (~3,4x) praticamente inalterado em relação
-ao corpus bruto (~3,2x).
-
 ## Otimização de latência
 
 Exportado para ONNX (`skl2onnx`) e comparado com quantização dinâmica INT8,
@@ -337,71 +187,262 @@ de desquantização por chamada supera o ganho de compute. Ainda entrega uma
 economia real de tamanho (35% menor que FP32) se espaço em disco for mais
 relevante que latência. Raciocínio completo em `docs/technical-decisions.md`.
 
+## Estrutura do projeto
+
+```
+├── app/                    # API FastAPI (inferência)
+│   ├── main.py              # endpoints /predict, /health, /metrics
+│   ├── model.py              # carregamento e execução do modelo ONNX
+│   └── urgency.py            # mapeamento categoria -> nível de urgência
+├── training/               # experimentação e treino (rastreados em MLflow)
+│   ├── data.py                # carga e split do dataset
+│   ├── model_selection.py     # experimento 1: escolha do modelo
+│   ├── feature_engineering.py # experimento 2: TF-IDF, n-gramas, etc.
+│   ├── hyperparameter_tuning.py # experimento 3: tuning do modelo escolhido
+│   ├── train_final.py         # treino final + avaliação no held-out test
+│   ├── airflow_tasks.py       # tarefas usadas pela DAG do Airflow
+│   └── evaluation.py          # métricas de classificação e triagem
+├── optimization/           # experimento 4: exportação ONNX + benchmark
+│   └── export_and_benchmark.py
+├── dags/                   # DAG de retrain do Airflow
+│   └── train_pipeline_dag.py
+├── airflow/                # ambiente Docker isolado para rodar a DAG
+├── frontend/               # frontend de exemplo em Streamlit
+│   └── streamlit_app.py
+├── monitoring/             # config do Prometheus + provisionamento do Grafana
+├── models/                 # artefatos de modelo (versionados via DVC)
+├── data/                   # CSVs brutos (versionados via DVC)
+├── tests/                  # testes automatizados (API, urgência, smoke test)
+├── docs/
+│   ├── architecture.md         # o quê: dataset, pipeline, AWS, CI/CD, Airflow
+│   ├── technical-decisions.md  # o porquê: raciocínio de cada decisão não óbvia
+│   └── model-card.md           # documentação do modelo (formato Mitchell et al.)
+├── Dockerfile              # imagem da API servida em produção
+└── docker-compose.yml      # stack local: api + prometheus + grafana
+```
+
+## Como reproduzir tudo localmente
+
+**Pré-requisitos**: Python 3.11+, [`uv`](https://docs.astral.sh/uv/), Docker
+Desktop (com `buildx`), AWS CLI configurado (só necessário para puxar
+artefatos do DVC/S3).
+
+**Sobre os grupos e extras do `uv`.** O projeto usa dois mecanismos diferentes
+do `uv`, com propósitos distintos — vale entender a diferença antes de rodar
+qualquer comando abaixo:
+
+- **`--group`** (`[dependency-groups]` no `pyproject.toml`) — ferramentas de
+  desenvolvimento/treino, **nunca instaladas na imagem Docker servida em
+  produção** (o `Dockerfile` só instala as dependências base do `[project]`,
+  o runtime da API). Existem dois grupos: `dev` (fastapi, pytest, ruff — para
+  rodar/editar/testar a API) e `training` (scikit-learn, mlflow, dvc,
+  skl2onnx — para treinar e reexportar o modelo). São aditivos: dá pra
+  instalar os dois juntos (`uv sync --group dev --group training`).
+- **`--extra`** (`[project.optional-dependencies]` no `pyproject.toml`) —
+  funcionalidade opcional do próprio pacote instalável. Aqui só existe
+  `frontend` (streamlit + requests), usado só para rodar a demo.
+
+| Necessidade | Comando | O que instala |
+|---|---|---|
+| Rodar/editar a API, rodar testes, lint | `uv sync --group dev` | fastapi, uvicorn, onnxruntime (base) + pytest, ruff, httpx |
+| Treinar, reexportar para ONNX, rodar experimentos MLflow | `uv sync --group training` | base + scikit-learn, mlflow, dvc, skl2onnx, pandas |
+| Rodar o frontend Streamlit | `uv sync --extra frontend` | base + streamlit, requests |
+| Fazer tudo de uma vez | `uv sync --group dev --group training --extra frontend` | tudo acima |
+
+**1. Clonar e instalar dependências:**
+
+```bash
+git clone https://github.com/JoaoFurlan/tech-challenge-03
+cd tech-challenge-03
+uv sync --group dev
+```
+
+**2. Puxar dados e artefatos de modelo (DVC/S3)** — não estão no git, e esse
+passo é necessário nos dois caminhos abaixo (dados brutos para retreinar,
+artefatos de modelo já treinados para só rodar a API):
+
+```bash
+uv run --group training dvc pull
+```
+
+A partir daqui existem dois caminhos, dependendo do que você quer verificar.
+
+### Caminho rápido — só rodar/conferir o resultado final
+
+Usa o modelo já treinado (puxado do DVC no passo 2), sem rodar nenhum
+experimento de novo. É o caminho certo se você só quer ver a API/dashboard
+funcionando ou conferir os testes.
+
+```bash
+uv run pytest -q                                   # roda os testes (o mesmo que a CI roda)
+uv run ruff check .                                # roda o lint (o mesmo que a CI roda)
+uv run uvicorn app.main:app --reload --port 8000   # sobe só a API, com reload automático
+```
+
+`curl http://localhost:8000/health`, ou abra http://localhost:8000/docs para
+a documentação interativa (Swagger). Para ver a stack completa de
+monitoramento em vez da API sozinha, pule direto para o passo **"Rodar a
+stack completa de monitoramento"** mais abaixo.
+
+### Caminho completo — reproduzir toda a experimentação (MLflow)
+
+Refaz do zero as 4 etapas de experimentação que geraram o modelo final,
+sobrescrevendo `models/`. Precisa do grupo `training`:
+
+```bash
+uv sync --group training
+```
+
+Cada comando abaixo é um experimento MLflow independente (uma aba separada na
+UI do MLflow), rodado **na ordem em que foram desenhados** — cada etapa lê o
+resultado (o vencedor) da etapa anterior, então rodar fora de ordem não
+reproduz o resultado final:
+
+```bash
+uv run python -m training.model_selection        # Etapa 1: compara 5 modelos x 2 configs de TF-IDF, decide o modelo
+uv run python -m training.feature_engineering     # Etapa 2: grid de 36 configs de TF-IDF no modelo vencedor da etapa 1
+uv run python -m training.hyperparameter_tuning   # Etapa 3: tuning dos hiperparâmetros do modelo/config vencedores
+uv run python -m training.train_final             # treina o pipeline final (vencedor das 3 etapas) -> models/pipeline.joblib
+uv run python -m optimization.export_and_benchmark # Etapa 4: exporta para ONNX + benchmarka latência -> models/pipeline_fp32.onnx
+```
+
+Para inspecionar qualquer run (métricas, parâmetros, matriz de confusão como
+artefato) na UI do MLflow, apontada para o SQLite local que todos os scripts
+acima usam:
+
+```bash
+uv run --group training mlflow ui --backend-store-uri sqlite:///mlflow.db
+```
+
+Abre em http://localhost:5000 (padrão do MLflow), com os 4 experimentos
+listados separadamente (`model-selection`, `feature-engineering`,
+`hyperparameter-tuning`, `latency-optimization`) — cada run individual mostra
+os parâmetros testados e as métricas resultantes lado a lado.
+
+### Rodar a stack completa de monitoramento (API + Prometheus + Grafana)
+
+```bash
+docker compose up --build
+```
+
+| Serviço | URL |
+|---|---|
+| API | http://localhost:8000 (`/predict`, `/health`, `/metrics`) |
+| Prometheus | http://localhost:9090 |
+| Grafana | http://localhost:3000 (acesso anônimo de visualização, sem login) |
+
+Gere tráfego para ver o dashboard populando — ex. `curl -X POST
+http://localhost:8000/predict -H "Content-Type: application/json" -d
+'{"text": "..."}'` — ou use o Streamlit do passo seguinte.
+
+### Rodar o frontend de demo (Streamlit)
+
+Apontado por padrão para `http://localhost:8000`:
+
+```bash
+uv sync --extra frontend
+uv run --extra frontend streamlit run frontend/streamlit_app.py
+```
+
+### Simular o retrain via Airflow
+
+Isso simula exatamente o que o desafio pede como "retrain": as mesmas tarefas
+`ingest` → `train` → `save_model` do **Caminho completo** acima, só que
+orquestradas pelo Airflow em vez de rodadas manualmente uma a uma — não é
+necessário ter rodado o Caminho completo antes para testar isso.
+
+Roda em Docker, não diretamente no host — o Airflow não roda nativamente no
+Windows (depende de uma API POSIX sem equivalente). É um ambiente separado do
+`docker-compose.yml` da raiz (orquestra retreino, não serve/observa a API):
+
+```bash
+cd airflow
+docker compose up --build -d
+```
+
+O container imprime a senha de admin gerada no primeiro boot —
+`docker compose logs | Select-String "Password for user"` (PowerShell) ou
+`docker compose logs | grep "Password for user"` (bash/zsh). Abra
+http://localhost:8081 e entre como `admin` com essa senha, depois dispare a
+DAG (`train_pipeline_dag`) pela UI ou via CLI:
+
+```bash
+docker compose exec airflow airflow dags unpause train_pipeline_dag
+docker compose exec airflow airflow dags trigger train_pipeline_dag
+```
+
+O container monta o repositório em modo leitura-escrita, então as tarefas
+`ingest`/`train`/`save_model` escrevem de volta em `data/`/`models/` no seu
+disco, do mesmo jeito que rodar os scripts de treino diretamente — as
+métricas logadas no MLflow são as mesmas, só a orquestração muda. Ao
+terminar:
+
+```bash
+docker compose down
+```
+
+Detalhes de por que o Airflow standalone é usado aqui (e não o
+docker-compose de produção) estão em `docs/technical-decisions.md`.
+
 ## Arquitetura em nuvem: tempo real vs. batch
 
-Existem três padrões de deploy possíveis para um modelo como este — a
-escolha certa depende do que a carga de trabalho realmente exige:
+**Tempo real**, não batch nem serverless: o hospital precisa da resposta
+normal/atenção/urgente assim que o laudo chega, não na próxima execução
+agendada — o próprio objetivo da triagem é pegar o caso urgente *agora*, e
+não existe aqui um volume acumulado de laudos para processar em lote. O cold
+start de uma opção serverless (Lambda) também seria incompatível com latência
+baixa e consistente numa ferramenta clínica. O custo constante de manter o
+modelo sempre carregado (em vez de proporcional ao uso) é um trade-off
+aceito deliberadamente em troca dessa latência.
 
-| | Batch | Tempo real | Serverless |
-|---|---|---|---|
-| Latência | Alta, tolerada | Baixa, determinística | Variável (cold start) |
-| Formato de custo | Concentrado em execuções agendadas | Constante (infra sempre ligada) | Alinhado à demanda |
-| Se encaixa aqui? | Não — não há carga recorrente em lote a processar | **Sim** | Não — cold start inaceitável |
-
-**Tempo real, não batch**: um laudo chega e o hospital precisa de uma
-resposta normal/atenção/urgente imediatamente, não na próxima execução
-agendada — o objetivo da triagem é pegar o caso urgente *agora*. Batch
-também não tem o que processar aqui — não existe um fluxo recorrente de
-laudos acumulados para processamento offline, só relatórios individuais
-chegando um a um. Serverless (Lambda) é descartado pelo mesmo motivo que
-batch é descartado, mas ao contrário: cold start por invocação é
-incompatível com latência baixa e consistente em uma ferramenta clínica,
-mesmo se encaixando no formato "uma requisição por vez". A desvantagem do
-padrão tempo real — custo constante em vez de proporcional ao uso, já que o
-modelo precisa ficar sempre carregado — é um trade-off aceitável e
-deliberado quando a latência tem consequência clínica direta.
-
-Dentro das opções de tempo real da AWS:
-
-- **App Runner** (alvo documentado) — container sempre ativo, sem instância
-  para provisionar ou corrigir, aponta para uma tag de imagem no ECR e roda.
-  O encaixe mais direto para "inferência em tempo real com operação mínima".
-- **EC2 puro** — mesmo comportamento sempre ativo, mas a carga operacional
-  (provisionamento, patches, health checks) que o App Runner existe para
-  remover volta para nós.
-- **Lambda** — descartado acima (cold start).
-- **AWS Batch** — formato errado; feito para jobs agendados/em lote, não
-  para um endpoint de inferência permanente.
-- **SageMaker** — plataforma de ML gerenciada completa (model registry,
-  endpoints gerenciados, governança) — capacidade real, mas configuração
-  desproporcional para um único classificador leve.
-
-**Deployado de fato em Elastic Beanstalk**, plataforma Docker de instância
-única, não App Runner — uma restrição real descoberta tarde, não uma
-mudança de design: App Runner não está no Free Tier da AWS, descoberto só
-na hora do deploy real. Beanstalk em uma instância EC2 única do free tier é
-o equivalente mais próximo elegível ao Free Tier da intenção do App
-Runner — mesma propriedade de sempre-ativo sem cold start, e o Beanstalk
-ainda absorve a maior parte da carga operacional manual de EC2
+**Deployado em Elastic Beanstalk** (instância única, Docker) — não no App
+Runner originalmente documentado como alvo: App Runner não está no Free Tier
+da AWS, descoberto só na hora do deploy real. Beanstalk numa única instância
+EC2 do Free Tier é o equivalente elegível mais próximo — mesma propriedade de
+sempre-ativo sem cold start, e ainda absorve boa parte da carga operacional
 (provisionamento, health checks, deploy) que o App Runner cuidaria
-diretamente. Especificamente o tipo de ambiente de instância única, não o
-com balanceamento de carga/auto-scaling — esse nível provisiona um Elastic
-Load Balancer, cobrado separadamente e fora do Free Tier. O raciocínio
-acima segue sendo a decisão *documentada*; o serviço deployado difere dela
-só por essa razão orçamentária, registrada explicitamente em vez de trocada
-em silêncio. História completa do pivô em `docs/technical-decisions.md`.
+diretamente. Raciocínio completo do pivô, forçado por essa restrição de
+orçamento descoberta tarde, em `docs/technical-decisions.md`.
 
-Uma versão pronta para produção dessa mesma arquitetura de tempo real
-também precisaria de rate limiting na API (controle de abuso e de custo — o
-formato de custo constante do tempo real torna tráfego não limitado um
-vazamento de custo direto, não só uma questão de segurança) e criptografia
-em trânsito/repouso para o texto dos laudos, já que é dado de paciente.
+**O que mudaria numa versão de produção real:**
+
+- **App Runner** (ou equivalente gerenciado) no lugar do Beanstalk, sem a
+  restrição de orçamento do Free Tier que forçou o pivô acima.
+- **Rate limiting** na API — o formato de custo constante do tempo real torna
+  tráfego não controlado um vazamento de custo direto, não só uma questão de
+  segurança.
+- **Criptografia em trânsito e em repouso** para o texto dos laudos, já que é
+  dado de paciente.
 
 ### Fluxo de dados e retrain
 
 Como um dataset de laudos vira um modelo deployado ao vivo hoje, no Airflow
 local deste projeto (**modo standalone, disparado manualmente** — demonstra
-a orquestração de retrain, não está conectado a deploy automático):
+a orquestração de retrain, não está conectado a deploy automático). Lendo o
+diagrama de cima para baixo:
+
+1. **Ingestão única** dos CSVs originais do Kaggle para `data/` local, depois
+   versionados no DVC e enviados para o S3 (o "remoto" do DVC) — feito uma
+   vez, não faz parte do ciclo de retrain.
+2. **A DAG do Airflow** (disparada manualmente, fronteira marcada no
+   diagrama) roda 3 tarefas em sequência: `ingest` puxa os dados do DVC/S3;
+   `train` separa pool/teste, treina o `Pipeline(TF-IDF + ComplementNB)` no
+   pool e avalia no teste, logando métricas e parâmetros no MLflow;
+   `save_model` escreve os artefatos (`pipeline.joblib`, `vocabulary.json`)
+   de volta em disco. A DAG termina aqui — ela produz o modelo treinado, mas
+   não o exporta nem o publica.
+3. **Fora da DAG, manualmente**: o `pipeline.joblib` é exportado para ONNX
+   (`optimization/export_and_benchmark.py`), gerando também os números de
+   benchmark de latência; o artefato ONNX é então versionado no DVC
+   (`dvc add` + `dvc push` para o S3) e os ponteiros `.dvc` resultantes são
+   commitados e enviados ao GitHub (`git push`).
+4. **A partir do `git push`, tudo é automático**: o workflow `ci-cd.yml`
+   detecta o push em `main`, roda lint/test, puxa o modelo do DVC, builda a
+   imagem Docker, testa localmente (smoke test), publica no ECR e atualiza o
+   ambiente do Elastic Beanstalk.
+5. **A API resultante**, já servindo o modelo novo, expõe `/predict` e
+   `/metrics`; o Prometheus captura essas métricas continuamente e o Grafana
+   as exibe no dashboard.
 
 ```
 [CSVs do Kaggle] (uma vez)
@@ -465,6 +506,11 @@ push que toque `docker-compose.yml`, `monitoring/**`, `app/**`, `Dockerfile`
 ou `models/*.dvc`, via **AWS Systems Manager Run Command** (sem SSH, sem
 chaves — a mesma role OIDC já usada pela API, com uma policy adicional de
 `ssm:SendCommand` restrita a essa instância).
+
+| Serviço | URL |
+|---|---|
+| Grafana | http://54.242.125.146:3000 |
+| Prometheus | http://54.242.125.146:9090 |
 
 O que uma versão de produção real teria a mais: Amazon Managed Service for
 Prometheus + Amazon Managed Grafana (alta disponibilidade, sem ponto único
