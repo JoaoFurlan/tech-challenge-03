@@ -40,7 +40,7 @@ deploy real na AWS.
 - CI/CD com 2 workflows independentes no GitHub Actions (lint → test → build
   → smoke test → deploy → rollback automático).
 - Deploy real na AWS, com decisão arquitetural documentada (tempo real vs.
-  batch) e um pivô de infraestrutura forçado por uma restrição real de custo
+  batch) e deploy automatizado via CI/CD
   ([§ Arquitetura em nuvem](#arquitetura-em-nuvem-tempo-real-vs-batch)).
 
 **Resultado.** Pipeline final `TF-IDF + ComplementNB` com F1-macro de 0.7786
@@ -64,7 +64,7 @@ curl -X POST http://medsys.us-east-1.elasticbeanstalk.com/predict \
   -d '{"text": "Patient presents with acute chest pain and shortness of breath, elevated troponin levels observed"}'
 ```
 
-**Example Frontend** (`frontend/streamlit_app.py`): UI em Streamlit sobre
+**Exemplo de Frontend** (`frontend/streamlit_app.py`): UI em Streamlit sobre
 `/predict`, hospedada separadamente no Streamlit Community Cloud (gratuito)
 para não duplicar horas de EC2 do Free Tier com um componente que é só um
 cliente HTTP. Acesse em https://medsys.streamlit.app/.
@@ -120,15 +120,30 @@ ao corpus bruto (~3,2x).
 
 ## Resultados do modelo
 
+**Os experimentos, em 3 etapas** (cada uma rastreada como um experimento
+MLflow separado, cada uma partindo do vencedor da etapa anterior):
+
+- **Seleção de modelo** — comparamos 5 candidatos (Regressão Logística,
+  LinearSVC, Multinomial Naive Bayes, Complement Naive Bayes e Random
+  Forest), cada um com 2 configurações de TF-IDF, via validação cruzada
+  (Stratified K-Fold). LinearSVC teve o maior F1-macro, mas **Complement
+  Naive Bayes** foi o escolhido por ter uma taxa de subtriagem
+  significativamente menor — o trade-off de segurança clínica descrito
+  abaixo.
+- **Engenharia de features** — com o modelo já escolhido, testamos um grid
+  de 36 configurações de TF-IDF (n-gramas, número de features, `min_df`,
+  `sublinear_tf`). Unigramas puros venceram: bigramas até melhoravam o
+  F1-macro, mas pioravam a taxa de subtriagem.
+- **Tuning de hiperparâmetros** — testamos 12 combinações de `alpha`/`norm`
+  do ComplementNB. Descartamos `fit_prior` (sem efeito mensurável, confirmado
+  empiricamente) e escolhemos um meio-termo entre o ponto de maior F1-macro e
+  o de menor subtriagem.
+
 O pipeline final é **TF-IDF (unigramas, 10.000 features) + Complement Naive
-Bayes** (`alpha=0.5, norm=True`). Ele não foi o vencedor bruto na métrica
-principal (F1-macro) entre os 4 modelos testados — esse título ficou com
-LinearSVC — mas foi o escolhido por ter uma taxa de subtriagem
-significativamente menor, um trade-off explícito de segurança clínica em
-troca de acurácia bruta. Esse padrão (o vencedor de acurácia não é o vencedor
-de segurança) se repetiu em todas as etapas de tuning, não só na escolha do
-modelo. O raciocínio completo, com os grids de busca de cada etapa, está em
-`docs/technical-decisions.md`.
+Bayes** (`alpha=0.5, norm=True`). Esse padrão (o vencedor de acurácia não é o
+vencedor de segurança) se repetiu em todas as 3 etapas, não só na escolha do
+modelo. O raciocínio completo, com os grids de busca e números de cada etapa,
+está em `docs/technical-decisions.md`.
 
 **O que cada métrica mede:**
 
@@ -242,6 +257,15 @@ qualquer comando abaixo:
   funcionalidade opcional do próprio pacote instalável. Aqui só existe
   `frontend` (streamlit + requests), usado só para rodar a demo.
 
+**`uv sync` vs. `uv run`:** `uv sync` instala/atualiza o `.venv` do projeto
+para bater exatamente com os grupos/extras pedidos — um efeito persistente,
+que continua valendo até você rodar outro `uv sync` diferente. `uv run
+<comando>` executa um comando dentro desse ambiente e, por padrão,
+resincroniza antes de rodar; por isso dá pra passar `--group`/`--extra`
+direto nele (como no `dvc pull` do passo 2 abaixo) para um comando pontual,
+sem precisar decidir de antemão se aquele grupo vai ficar permanentemente
+sincronizado no seu ambiente principal.
+
 | Necessidade | Comando | O que instala |
 |---|---|---|
 | Rodar/editar a API, rodar testes, lint | `uv sync --group dev` | fastapi, uvicorn, onnxruntime (base) + pytest, ruff, httpx |
@@ -269,9 +293,12 @@ A partir daqui existem dois caminhos, dependendo do que você quer verificar.
 
 ### Caminho rápido — só rodar/conferir o resultado final
 
-Usa o modelo já treinado (puxado do DVC no passo 2), sem rodar nenhum
-experimento de novo. É o caminho certo se você só quer ver a API/dashboard
-funcionando ou conferir os testes.
+Usa o modelo já treinado (puxado do DVC no passo 2), **sem precisar
+sincronizar o grupo `training` nem rodar nenhum script de treino** — o `uv
+sync --group dev` do passo 1 já basta para o ambiente da API, e o `dvc pull`
+do passo 2 já traz `models/pipeline_fp32.onnx` pronto (o mesmo artefato
+gerado pelas 4 etapas do Caminho completo abaixo). É o caminho certo se você
+só quer ver a API/dashboard funcionando ou conferir os testes.
 
 ```bash
 uv run pytest -q                                   # roda os testes (o mesmo que a CI roda)
@@ -395,19 +422,17 @@ baixa e consistente numa ferramenta clínica. O custo constante de manter o
 modelo sempre carregado (em vez de proporcional ao uso) é um trade-off
 aceito deliberadamente em troca dessa latência.
 
-**Deployado em Elastic Beanstalk** (instância única, Docker) — não no App
-Runner originalmente documentado como alvo: App Runner não está no Free Tier
-da AWS, descoberto só na hora do deploy real. Beanstalk numa única instância
-EC2 do Free Tier é o equivalente elegível mais próximo — mesma propriedade de
-sempre-ativo sem cold start, e ainda absorve boa parte da carga operacional
-(provisionamento, health checks, deploy) que o App Runner cuidaria
-diretamente. Raciocínio completo do pivô, forçado por essa restrição de
-orçamento descoberta tarde, em `docs/technical-decisions.md`.
+**Deployado em Elastic Beanstalk** (instância única, Docker) — sempre ativo,
+sem cold start. O deploy é 100% automatizado pela CI: a cada push em `main`,
+o pipeline builda a imagem, publica no ECR, atualiza o `Dockerrun.aws.json`
+com a nova tag, cria uma nova versão da aplicação no Beanstalk e atualiza o
+ambiente — com rollback automático para a versão anterior se o health check
+pós-deploy falhar (ver [§ CI/CD](#cicd)).
 
 **O que mudaria numa versão de produção real:**
 
-- **App Runner** (ou equivalente gerenciado) no lugar do Beanstalk, sem a
-  restrição de orçamento do Free Tier que forçou o pivô acima.
+- **Um serviço totalmente gerenciado** (App Runner ou equivalente) no lugar
+  do Beanstalk, sem precisar manter uma instância EC2 única.
 - **Rate limiting** na API — o formato de custo constante do tempo real torna
   tráfego não controlado um vazamento de custo direto, não só uma questão de
   segurança.
