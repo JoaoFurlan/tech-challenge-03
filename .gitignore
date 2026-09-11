@@ -43,3 +43,6 @@ logs/
 Thumbs.db
 .vscode/
 .idea/
+
+# Personal working notes, not part of the submission
+video-script.md
