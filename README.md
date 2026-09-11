@@ -54,8 +54,7 @@ de triagem informal) — ver [§ Resultados do modelo](#resultados-do-modelo).
 
 **Deploy ao vivo**: http://medsys.us-east-1.elasticbeanstalk.com/ — API de
 inferência em tempo real (`/predict`, `/health`, `/metrics`) rodando em AWS
-Elastic Beanstalk, deployada automaticamente pela CI a cada push em `main`
-(desligada fora da janela de avaliação/demo).
+Elastic Beanstalk, deployada automaticamente pela CI a cada push em `main`.
 
 ```bash
 curl http://medsys.us-east-1.elasticbeanstalk.com/health
@@ -252,8 +251,7 @@ máquina para números representativos do seu ambiente.
 
 **Pré-requisitos**: Python 3.11+, [`uv`](https://docs.astral.sh/uv/), Docker
 Desktop (com `buildx`). **Não é necessário ter credenciais AWS** — o bucket
-S3 do DVC (`dvc-store/`) é público para leitura (só leitura: ninguém de fora
-consegue escrever nele). Se você não tiver credenciais AWS configuradas,
+S3 do DVC (`dvc-store/`) é público para leitura. Se você não tiver credenciais AWS configuradas,
 rode isto uma vez antes do passo 2 (grava só em `.dvc/config.local`, que é
 ignorado pelo git — não afeta o autor do projeto nem qualquer uso futuro com
 credenciais reais):
